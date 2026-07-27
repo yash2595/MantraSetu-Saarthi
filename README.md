@@ -1,4 +1,4 @@
-# MantraSetu AI Assistant Backend
+# MantraSetu-Saarthi AI Backend
 
 Production-ready FastAPI backend skeleton for the MantraSetu AI Assistant.
 
