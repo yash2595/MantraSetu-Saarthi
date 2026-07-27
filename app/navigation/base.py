@@ -1,118 +1,176 @@
-"""Abstract base contract for the Navigation Engine in MantraSetu AgentOS.
+"""Abstract contracts and interfaces for the Navigation Intelligence subsystem in MantraSetu AgentOS.
 
-This module defines the abstract interface that all navigation engine implementations
-must satisfy, maintaining Clean Architecture, Domain-Driven Design, and Dependency Inversion.
+This module defines abstract base classes for navigation planners, website graphs, site analyzers,
+and action execution engines alongside domain exception hierarchies.
 """
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from uuid import UUID
 
 from app.navigation.models import (
-    NavigationHistory,
+    NavigationAction,
+    NavigationContext,
+    NavigationEdge,
     NavigationPlan,
-    NavigationState,
+    WebsiteNode,
 )
 
 
-class BaseNavigationEngine(ABC):
-    """Abstract interface defining the contract for Navigation Engine implementations.
+class NavigationError(Exception):
+    """Base exception for all navigation subsystem errors."""
 
-    Responsibility:
-        Establishes the lifecycle, state management, path planning, and resource
-        handling operations required across all Navigation Engine components.
-    """
+    pass
 
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize navigation engine resources and runtime dependencies."""
-        pass
 
-    @abstractmethod
-    async def get_state(self, session_id: UUID) -> NavigationState:
-        """Retrieve the active navigation state for a given session.
+class NavigationGraphError(NavigationError):
+    """Raised when website structure graph node or edge operations fail."""
 
-        Args:
-            session_id: Unique identifier of the navigation session.
+    pass
 
-        Returns:
-            NavigationState: The active navigation state associated with the session.
-        """
-        pass
 
-    @abstractmethod
-    async def update_state(self, state: NavigationState) -> None:
-        """Persist or update the navigation state for a session.
+class NavigationPlanningError(NavigationError):
+    """Raised when navigation goal plan generation fails."""
 
-        Args:
-            state: The navigation state instance to persist.
-        """
-        pass
+    pass
 
-    @abstractmethod
-    async def get_history(self, session_id: UUID) -> NavigationHistory:
-        """Retrieve the chronological navigation history log for a session.
 
-        Args:
-            session_id: Unique identifier of the navigation session.
+class NavigationExecutionError(NavigationError):
+    """Raised when browser action execution fails."""
 
-        Returns:
-            NavigationHistory: Chronological history record for the session.
-        """
-        pass
+    pass
+
+
+class NavigationContextError(NavigationError):
+    """Raised when navigation context or history updates fail."""
+
+    pass
+
+
+class NavigationInitializationError(NavigationError):
+    """Raised when a navigation component initialization fails."""
+
+    pass
+
+
+class BaseNavigationPlanner(ABC):
+    """Abstract interface defining the contract for goal-oriented navigation planners."""
 
     @abstractmethod
-    async def can_navigate(
+    async def create_plan(
         self,
-        source_node_id: UUID,
-        target_node_id: UUID,
-    ) -> bool:
-        """Determine whether a valid navigation path exists between source and target nodes.
-
-        Args:
-            source_node_id: Identifier of the originating navigation node.
-            target_node_id: Identifier of the destination target node.
-
-        Returns:
-            bool: True if navigation is feasible, False otherwise.
-        """
-        pass
-
-    @abstractmethod
-    async def plan_navigation(
-        self,
-        session_id: UUID,
-        target_node_id: UUID,
+        goal: str,
+        context: NavigationContext,
     ) -> NavigationPlan:
-        """Generate an action plan sequence for a session to navigate to a target node.
+        """Generate a multi-step NavigationPlan to achieve a user goal.
 
         Args:
-            session_id: Unique identifier of the navigation session.
-            target_node_id: Identifier of the destination target node.
+            goal: Human-readable goal description string.
+            context: Active NavigationContext configuration.
 
         Returns:
-            NavigationPlan: Structured plan manifest detailing the actions required.
+            NavigationPlan: Created navigation plan model.
+
+        Raises:
+            NavigationPlanningError: If plan creation fails.
         """
-        pass
+        ...
+
+
+class BaseNavigationGraph(ABC):
+    """Abstract interface defining the contract for website structure map stores."""
 
     @abstractmethod
-    async def reset(self, session_id: UUID) -> None:
-        """Reset and clear the navigation state and active plan for a session.
+    async def add_node(
+        self,
+        node: WebsiteNode,
+    ) -> None:
+        """Add a WebsiteNode entity to the navigation graph.
 
         Args:
-            session_id: Unique identifier of the navigation session to reset.
+            node: WebsiteNode instance to register.
+
+        Raises:
+            NavigationGraphError: If node insertion fails.
         """
-        pass
+        ...
 
     @abstractmethod
-    async def health_check(self) -> bool:
-        """Check the health and operational availability of the navigation engine.
+    async def add_edge(
+        self,
+        edge: NavigationEdge,
+    ) -> None:
+        """Add a NavigationEdge transition connecting two nodes in the graph.
+
+        Args:
+            edge: NavigationEdge instance to register.
+
+        Raises:
+            NavigationGraphError: If edge insertion fails.
+        """
+        ...
+
+    @abstractmethod
+    async def find_path(
+        self,
+        source: UUID,
+        target: UUID,
+    ) -> tuple[WebsiteNode, ...]:
+        """Find optimal path sequence of WebsiteNode entities between source and target nodes.
+
+        Args:
+            source: Source node identifier UUID.
+            target: Target node identifier UUID.
 
         Returns:
-            bool: True if the engine and its dependencies are healthy, False otherwise.
+            tuple[WebsiteNode, ...]: Immutable tuple of ordered WebsiteNode entities.
+
+        Raises:
+            NavigationGraphError: If no valid path exists or query fails.
         """
-        pass
+        ...
+
+
+class BaseNavigationAnalyzer(ABC):
+    """Abstract interface defining the contract for website structure analyzers."""
 
     @abstractmethod
-    async def close(self) -> None:
-        """Release all allocated engine resources, connections, and background tasks."""
-        pass
+    async def analyze(
+        self,
+        url: str,
+    ) -> tuple[WebsiteNode, ...]:
+        """Analyze a web page URL and discover navigation nodes.
+
+        Args:
+            url: Page URL string to analyze.
+
+        Returns:
+            tuple[WebsiteNode, ...]: Immutable tuple of discovered WebsiteNode entities.
+
+        Raises:
+            NavigationError: If page analysis fails.
+        """
+        ...
+
+
+class BaseNavigationExecutor(ABC):
+    """Abstract interface defining the contract for navigation action execution engines."""
+
+    @abstractmethod
+    async def execute(
+        self,
+        action: NavigationAction,
+    ) -> bool:
+        """Execute an individual NavigationAction command.
+
+        Args:
+            action: NavigationAction model command.
+
+        Returns:
+            bool: True if execution succeeded, False otherwise.
+
+        Raises:
+            NavigationExecutionError: If action execution fails.
+        """
+        ...

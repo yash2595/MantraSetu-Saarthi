@@ -1,313 +1,200 @@
-"""Storage abstractions and in-memory storage implementation for Navigation Intelligence.
+"""In-memory storage layer for Navigation Intelligence in MantraSetu AgentOS.
 
-This module provides the BaseNavigationStore abstract contract and the concrete MemoryNavigationStore
-for persisting navigation states, histories, and execution plans within MantraSetu AgentOS.
+This module implements NavigationStore, a thread-safe in-memory store for tracking WebsiteNode entities,
+NavigationPlan instances, and NavigationContext states using asyncio primitives.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from types import MappingProxyType
+import asyncio
 from uuid import UUID
 
-from app.navigation.models import NavigationHistory, NavigationPlan, NavigationState
+from app.core.models import ComponentHealth, SystemHealthStatus
+from app.navigation.base import (
+    NavigationContextError,
+    NavigationInitializationError,
+)
+from app.navigation.models import (
+    NavigationContext,
+    NavigationPlan,
+    WebsiteNode,
+)
 
 
-class BaseNavigationStore(ABC):
-    """Abstract storage contract for Navigation session state, history, and plans.
-
-    Responsibility:
-        Establishes non-blocking asynchronous persistence methods for saving, retrieving,
-        and purging navigation domain entities across session lifecycles.
-    """
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize navigation store connections, pools, and storage resources."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close navigation store connections and release allocated storage resources."""
-        ...
-
-    @abstractmethod
-    async def save_state(self, state: NavigationState) -> None:
-        """Persist a navigation state instance.
-
-        Args:
-            state: The NavigationState instance to store.
-        """
-        ...
-
-    @abstractmethod
-    async def get_state(self, session_id: UUID) -> NavigationState | None:
-        """Retrieve the navigation state for a given session.
-
-        Args:
-            session_id: Unique identifier of the session.
-
-        Returns:
-            NavigationState | None: The active state instance, or None if not found.
-        """
-        ...
-
-    @abstractmethod
-    async def delete_state(self, session_id: UUID) -> None:
-        """Delete the navigation state for a given session.
-
-        Args:
-            session_id: Unique identifier of the session.
-        """
-        ...
-
-    @abstractmethod
-    async def save_history(self, history: NavigationHistory) -> None:
-        """Persist a navigation history record.
-
-        Args:
-            history: The NavigationHistory instance to store.
-        """
-        ...
-
-    @abstractmethod
-    async def get_history(self, session_id: UUID) -> NavigationHistory | None:
-        """Retrieve the navigation history for a given session.
-
-        Args:
-            session_id: Unique identifier of the session.
-
-        Returns:
-            NavigationHistory | None: The history record, or None if not found.
-        """
-        ...
-
-    @abstractmethod
-    async def delete_history(self, session_id: UUID) -> None:
-        """Delete the navigation history for a given session.
-
-        Args:
-            session_id: Unique identifier of the session.
-        """
-        ...
-
-    @abstractmethod
-    async def save_plan(
-        self, plan: NavigationPlan, session_id: UUID | None = None
-    ) -> None:
-        """Persist a navigation plan instance.
-
-        Args:
-            plan: The NavigationPlan instance to store.
-            session_id: Optional session identifier owning this navigation plan.
-        """
-        ...
-
-    @abstractmethod
-    async def get_plan(self, plan_id: UUID) -> NavigationPlan | None:
-        """Retrieve a navigation plan by its plan_id.
-
-        Args:
-            plan_id: Unique identifier of the navigation plan.
-
-        Returns:
-            NavigationPlan | None: The matching plan instance, or None if not found.
-        """
-        ...
-
-    @abstractmethod
-    async def delete_plan(self, plan_id: UUID) -> None:
-        """Delete a navigation plan by its plan_id.
-
-        Args:
-            plan_id: Unique identifier of the navigation plan.
-        """
-        ...
-
-    @abstractmethod
-    async def clear_session(self, session_id: UUID) -> None:
-        """Purge all navigation artifacts (state, history, and associated plans) for a session.
-
-        Args:
-            session_id: Unique identifier of the session to clear.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check store availability and health status.
-
-        Returns:
-            bool: True if store is healthy and operational, False otherwise.
-        """
-        ...
-
-
-class MemoryNavigationStore(BaseNavigationStore):
-    """In-memory implementation of BaseNavigationStore.
+class NavigationStore:
+    """Thread-safe in-memory navigation entity storage manager.
 
     Responsibility:
-        Provides rapid O(1) dictionary-backed state, history, and plan persistence
-        for testing, local execution, and in-memory runtime sessions.
+        Provides thread-safe persistence and retrieval of WebsiteNode entities, NavigationPlan models,
+        and NavigationContext states without external database dependencies.
     """
 
     def __init__(self) -> None:
-        """Initialize an empty MemoryNavigationStore."""
-        self._states: dict[UUID, NavigationState] = {}
-        self._histories: dict[UUID, NavigationHistory] = {}
+        """Initialize NavigationStore with internal registries and asyncio lock."""
+        self._nodes: dict[UUID, WebsiteNode] = {}
         self._plans: dict[UUID, NavigationPlan] = {}
-        self._session_plans: dict[UUID, set[UUID]] = {}
+        self._contexts: dict[UUID, NavigationContext] = {}
+        self._lock = asyncio.Lock()
+        self._initialized = False
 
-    @property
-    def states(self) -> Mapping[UUID, NavigationState]:
-        """Read-only view of in-memory navigation states.
+    def _require_initialized(self) -> None:
+        """Verify that the navigation store has been initialized.
 
-        Returns:
-            Mapping[UUID, NavigationState]: Immutable proxy mapping of active states.
+        Raises:
+            NavigationInitializationError: If initialize() has not been called.
         """
-        return MappingProxyType(self._states)
-
-    @property
-    def histories(self) -> Mapping[UUID, NavigationHistory]:
-        """Read-only view of in-memory navigation histories.
-
-        Returns:
-            Mapping[UUID, NavigationHistory]: Immutable proxy mapping of active histories.
-        """
-        return MappingProxyType(self._histories)
-
-    @property
-    def plans(self) -> Mapping[UUID, NavigationPlan]:
-        """Read-only view of in-memory navigation plans.
-
-        Returns:
-            Mapping[UUID, NavigationPlan]: Immutable proxy mapping of active plans.
-        """
-        return MappingProxyType(self._plans)
+        if not self._initialized:
+            raise NavigationInitializationError(
+                "NavigationStore is not initialized. Call initialize() first."
+            )
 
     async def initialize(self) -> None:
-        """Initialize in-memory storage resources (no-op)."""
-        pass
+        """Initialize navigation store runtime state. Idempotent."""
+        async with self._lock:
+            if self._initialized:
+                return
+            self._initialized = True
 
     async def close(self) -> None:
-        """Close in-memory storage resources and release allocations (no-op)."""
-        pass
+        """Close navigation store and clear all internal registries."""
+        async with self._lock:
+            self._nodes.clear()
+            self._plans.clear()
+            self._contexts.clear()
+            self._initialized = False
 
-    async def save_state(self, state: NavigationState) -> None:
-        """Persist a navigation state in memory.
+    async def save_node(self, node: WebsiteNode) -> None:
+        """Store a WebsiteNode entity.
 
         Args:
-            state: The NavigationState instance to store.
+            node: WebsiteNode instance to store.
+
+        Raises:
+            NavigationInitializationError: If store is uninitialized.
+            NavigationContextError: If node parameter is invalid.
         """
-        self._states[state.session_id] = state
-        if state.current_plan_id:
-            if state.session_id not in self._session_plans:
-                self._session_plans[state.session_id] = set()
-            self._session_plans[state.session_id].add(state.current_plan_id)
+        self._require_initialized()
+        if not isinstance(node, WebsiteNode):
+            raise NavigationContextError("Invalid WebsiteNode instance provided.")
 
-    async def get_state(self, session_id: UUID) -> NavigationState | None:
-        """Retrieve the in-memory navigation state for a given session.
+        async with self._lock:
+            self._nodes[node.node_id] = node
+
+    async def get_node(self, node_id: UUID) -> WebsiteNode:
+        """Retrieve a WebsiteNode entity by identifier.
 
         Args:
-            session_id: Unique identifier of the session.
+            node_id: Unique node identifier UUID.
 
         Returns:
-            NavigationState | None: Matching state, or None if not present.
-        """
-        return self._states.get(session_id)
+            WebsiteNode: Retrieved node entity.
 
-    async def delete_state(self, session_id: UUID) -> None:
-        """Delete the in-memory navigation state for a given session.
+        Raises:
+            NavigationInitializationError: If store is uninitialized.
+            NavigationContextError: If node_id is not found.
+        """
+        self._require_initialized()
+        if not isinstance(node_id, UUID):
+            raise NavigationContextError("Invalid node_id UUID provided.")
+
+        async with self._lock:
+            node = self._nodes.get(node_id)
+            if not node:
+                raise NavigationContextError(f"WebsiteNode '{node_id}' not found in store.")
+            return node
+
+    async def save_plan(self, plan: NavigationPlan) -> None:
+        """Store a NavigationPlan model.
 
         Args:
-            session_id: Unique identifier of the session.
-        """
-        self._states.pop(session_id, None)
+            plan: NavigationPlan instance to store.
 
-    async def save_history(self, history: NavigationHistory) -> None:
-        """Persist a navigation history record in memory.
+        Raises:
+            NavigationInitializationError: If store is uninitialized.
+            NavigationContextError: If plan parameter is invalid.
+        """
+        self._require_initialized()
+        if not isinstance(plan, NavigationPlan):
+            raise NavigationContextError("Invalid NavigationPlan instance provided.")
+
+        async with self._lock:
+            self._plans[plan.plan_id] = plan
+
+    async def get_plan(self, plan_id: UUID) -> NavigationPlan:
+        """Retrieve a NavigationPlan model by identifier.
 
         Args:
-            history: The NavigationHistory instance to store.
-        """
-        self._histories[history.session_id] = history
-
-    async def get_history(self, session_id: UUID) -> NavigationHistory | None:
-        """Retrieve the in-memory navigation history for a given session.
-
-        Args:
-            session_id: Unique identifier of the session.
+            plan_id: Unique plan identifier UUID.
 
         Returns:
-            NavigationHistory | None: Matching history, or None if not present.
-        """
-        return self._histories.get(session_id)
+            NavigationPlan: Retrieved navigation plan model.
 
-    async def delete_history(self, session_id: UUID) -> None:
-        """Delete the in-memory navigation history for a given session.
+        Raises:
+            NavigationInitializationError: If store is uninitialized.
+            NavigationContextError: If plan_id is not found.
+        """
+        self._require_initialized()
+        if not isinstance(plan_id, UUID):
+            raise NavigationContextError("Invalid plan_id UUID provided.")
+
+        async with self._lock:
+            plan = self._plans.get(plan_id)
+            if not plan:
+                raise NavigationContextError(f"NavigationPlan '{plan_id}' not found in store.")
+            return plan
+
+    async def save_context(self, context: NavigationContext) -> None:
+        """Store a NavigationContext model keyed by session_id.
 
         Args:
-            session_id: Unique identifier of the session.
-        """
-        self._histories.pop(session_id, None)
+            context: NavigationContext instance to store.
 
-    async def save_plan(
-        self, plan: NavigationPlan, session_id: UUID | None = None
-    ) -> None:
-        """Persist a navigation plan instance in memory and register under owning session.
+        Raises:
+            NavigationInitializationError: If store is uninitialized.
+            NavigationContextError: If context parameter or context.session_id is invalid.
+        """
+        self._require_initialized()
+        if not isinstance(context, NavigationContext):
+            raise NavigationContextError("Invalid NavigationContext instance provided.")
+        if context.session_id is None:
+            raise NavigationContextError("NavigationContext session_id cannot be None when storing context.")
+
+        async with self._lock:
+            self._contexts[context.session_id] = context
+
+    async def get_context(self, session_id: UUID) -> NavigationContext:
+        """Retrieve a NavigationContext model by session_id.
 
         Args:
-            plan: The NavigationPlan instance to store.
-            session_id: Optional session identifier owning this plan.
-        """
-        self._plans[plan.plan_id] = plan
-        if session_id:
-            if session_id not in self._session_plans:
-                self._session_plans[session_id] = set()
-            self._session_plans[session_id].add(plan.plan_id)
-
-    async def get_plan(self, plan_id: UUID) -> NavigationPlan | None:
-        """Retrieve a navigation plan by its plan_id from memory.
-
-        Args:
-            plan_id: Unique identifier of the navigation plan.
+            session_id: Unique user session identifier UUID.
 
         Returns:
-            NavigationPlan | None: Matching plan, or None if not present.
+            NavigationContext: Retrieved navigation context model.
+
+        Raises:
+            NavigationInitializationError: If store is uninitialized.
+            NavigationContextError: If session_id is not found in store.
         """
-        return self._plans.get(plan_id)
+        self._require_initialized()
+        if not isinstance(session_id, UUID):
+            raise NavigationContextError("Invalid session_id UUID provided.")
 
-    async def delete_plan(self, plan_id: UUID) -> None:
-        """Delete a navigation plan by its plan_id from memory and session tracking.
+        async with self._lock:
+            ctx = self._contexts.get(session_id)
+            if not ctx:
+                raise NavigationContextError(f"NavigationContext for session '{session_id}' not found in store.")
+            return ctx
 
-        Args:
-            plan_id: Unique identifier of the navigation plan.
-        """
-        self._plans.pop(plan_id, None)
-        for plan_set in self._session_plans.values():
-            plan_set.discard(plan_id)
-
-    async def clear_session(self, session_id: UUID) -> None:
-        """Purge all navigation artifacts (state, history, and associated plans) for a session.
-
-        Args:
-            session_id: Unique identifier of the session to clear.
-        """
-        state = self._states.pop(session_id, None)
-        self._histories.pop(session_id, None)
-
-        associated_plan_ids = self._session_plans.pop(session_id, set())
-        if state and state.current_plan_id:
-            associated_plan_ids.add(state.current_plan_id)
-
-        for plan_id in associated_plan_ids:
-            self._plans.pop(plan_id, None)
-
-    async def health_check(self) -> bool:
-        """Check in-memory store health.
+    async def health_check(self) -> ComponentHealth:
+        """Check operational health of the navigation store.
 
         Returns:
-            bool: Always True for in-memory storage.
+            ComponentHealth: Operational component health status model.
         """
-        return True
+        return ComponentHealth(
+            component_name="navigation_store",
+            status=SystemHealthStatus.HEALTHY if self._initialized else SystemHealthStatus.UNHEALTHY,
+            message="NavigationStore operational."
+            if self._initialized
+            else "NavigationStore uninitialized.",
+        )
