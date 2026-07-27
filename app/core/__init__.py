@@ -1,5 +1,88 @@
-"""Core application package."""
+"""Core domain package for MantraSetu AgentOS."""
 
-from app.core.app import create_app
+from app.core.dependency import ApplicationContainer
+from app.core.exceptions import (
+    ApplicationError,
+    AuthenticationError,
+    AuthorizationError,
+    ConfigurationError,
+    ConflictError,
+    DependencyError,
+    ExternalServiceError,
+    HealthCheckError,
+    InternalServerError,
+    RateLimitError,
+    ResourceNotFoundError,
+    TimeoutError,
+    ValidationError,
+)
+from app.core.health import BaseHealthCheck, HealthAggregator
+from app.core.lifecycle import (
+    BaseLifecycleService,
+    LifecycleManager,
+    LifecycleState,
+)
+from app.core.models import (
+    ApplicationInfo,
+    BaseCoreModel,
+    ComponentHealth,
+    HealthStatus,
+    Pagination,
+    ServiceInfo,
+    SystemHealthStatus,
+    TimestampedModel,
+    VersionInfo,
+)
+from app.core.settings import (
+    AISettings,
+    APISettings,
+    ApplicationConfig,
+    ApplicationSettings,
+    BrowserSettings,
+    Environment,
+    HealthSettings,
+    RAGSettings,
+    ServerSettings,
+    load_settings,
+)
 
-__all__ = ["create_app"]
+__all__ = [
+    "BaseCoreModel",
+    "TimestampedModel",
+    "SystemHealthStatus",
+    "VersionInfo",
+    "ComponentHealth",
+    "HealthStatus",
+    "ApplicationInfo",
+    "ServiceInfo",
+    "Pagination",
+    "ApplicationError",
+    "ConfigurationError",
+    "ValidationError",
+    "AuthenticationError",
+    "AuthorizationError",
+    "ResourceNotFoundError",
+    "ConflictError",
+    "RateLimitError",
+    "ExternalServiceError",
+    "TimeoutError",
+    "HealthCheckError",
+    "DependencyError",
+    "InternalServerError",
+    "BaseHealthCheck",
+    "HealthAggregator",
+    "Environment",
+    "ApplicationConfig",
+    "ServerSettings",
+    "AISettings",
+    "RAGSettings",
+    "BrowserSettings",
+    "APISettings",
+    "HealthSettings",
+    "ApplicationSettings",
+    "load_settings",
+    "ApplicationContainer",
+    "LifecycleState",
+    "BaseLifecycleService",
+    "LifecycleManager",
+]

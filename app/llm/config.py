@@ -1,36 +1,5 @@
-"""Environment-driven configuration for LLM providers."""
+"""LLM configuration module alias pointing to app.llm.settings."""
 
-from functools import lru_cache
+from app.llm.settings import LLMSettings, get_llm_settings, llm_settings
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class LLMSettings(BaseSettings):
-    """Typed LLM configuration loaded from environment variables."""
-
-    provider: str = Field(default="openrouter")
-
-    timeout_seconds: float = Field(default=60.0, gt=0)
-    max_retries: int = Field(default=2, ge=0)
-    retry_backoff_seconds: float = Field(default=2.0, ge=0)
-
-    api_key: str = Field(default="")
-    base_url: str = Field(default="https://openrouter.ai/api/v1")
-
-    model: str = Field(default="qwen/qwen3-omni")
-
-    app_name: str = Field(default="MantraSetu AI Backend")
-    app_url: str = Field(default="http://localhost:8000")
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        env_prefix="",
-        extra="ignore",
-    )
-
-
-@lru_cache(maxsize=1)
-def get_llm_settings() -> LLMSettings:
-    return LLMSettings()
+__all__ = ["LLMSettings", "get_llm_settings", "llm_settings"]

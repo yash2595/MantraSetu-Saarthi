@@ -1,148 +1,169 @@
-"""Abstract orchestrator contracts and dependency protocols.
+"""Abstract contracts and interfaces for the Orchestrator subsystem in MantraSetu AgentOS.
 
-This module defines the replaceable boundaries for the AI orchestrator layer.
-The orchestrator itself must not own business logic; it only coordinates
-pluggable collaborators through these contracts.
+This module defines abstract base classes for planning, routing, execution handlers, workflow execution,
+and orchestrator engine facades alongside domain exception hierarchies, enforcing Dependency Inversion.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
+from uuid import UUID
 
-from app.schemas.chat import AIResponse, ChatRequest, ChatResponse
-from app.schemas.context import ConversationContext, Intent, NavigationState
-from app.schemas.planner import PlannerResponse
-from app.schemas.memory import MemoryRecord
-from app.schemas.tools import ToolCall, ToolResult
-
-
-@runtime_checkable
-class ConversationContextLoader(Protocol):
-    """Load and persist conversation context for a request."""
-
-    async def load(self, conversation_id: str, **kwargs: Any) -> ConversationContext | None:
-        """Load the latest conversation context, if available."""
-
-    async def save(self, context: ConversationContext, **kwargs: Any) -> None:
-        """Persist the latest conversation context."""
+from app.orchestrator.models import (
+    ExecutionContext,
+    ExecutionPlan,
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionStep,
+    ExecutionTarget,
+)
 
 
-@runtime_checkable
-class PromptProvider(Protocol):
-    """Resolve prompt variants without exposing storage details."""
+class OrchestratorError(Exception):
+    """Base exception for all orchestrator subsystem errors."""
 
-    def get_system_prompt(self, version: str | None = None, **variables: Any) -> str:
-        """Return the active system prompt."""
-
-    def get_navigation_prompt(self, version: str | None = None, **variables: Any) -> str:
-        """Return the navigation prompt."""
-
-    def get_booking_prompt(self, version: str | None = None, **variables: Any) -> str:
-        """Return the booking prompt."""
-
-    def get_pandit_prompt(self, version: str | None = None, **variables: Any) -> str:
-        """Return the pandit prompt."""
+    pass
 
 
-@runtime_checkable
-class LLMClient(Protocol):
-    """Provider-agnostic LLM execution contract."""
+class PlanningError(OrchestratorError):
+    """Raised when execution plan generation fails."""
 
-    async def generate(self, prompt: str, **kwargs: Any) -> str:
-        """Generate a raw model response."""
+    pass
 
 
-@runtime_checkable
-class StructuredOutputParser(Protocol):
-    """Parse raw LLM output into typed orchestration artifacts."""
+class RoutingError(OrchestratorError):
+    """Raised when step routing resolution fails."""
 
-    def parse_ai_response(self, raw_output: str, **kwargs: Any) -> AIResponse:
-        """Convert raw model output into a structured AI response."""
-
-    def parse_chat_response(self, raw_output: str, **kwargs: Any) -> ChatResponse:
-        """Convert raw model output into a chat response."""
+    pass
 
 
-@runtime_checkable
-class RoutingPolicy(Protocol):
-    """Decide which downstream subsystems must be invoked."""
+class ExecutionError(OrchestratorError):
+    """Raised when plan or step execution fails."""
 
-    def requires_rag(self, intent: Intent | None, ai_response: AIResponse | None, **kwargs: Any) -> bool:
-        """Return True when retrieval should be invoked."""
-
-    def requires_tool_call(self, intent: Intent | None, ai_response: AIResponse | None, **kwargs: Any) -> bool:
-        """Return True when tool execution should be invoked."""
-
-    def requires_navigation(self, intent: Intent | None, navigation_state: NavigationState | None, **kwargs: Any) -> bool:
-        """Return True when navigation handling is required."""
-
-    def requires_planner(self, intent: Intent | None, ai_response: AIResponse | None, **kwargs: Any) -> bool:
-        """Return True when planner coordination is required."""
+    pass
 
 
-@runtime_checkable
-class RAGGateway(Protocol):
-    """Boundary for retrieval-augmented generation coordination."""
+class StateError(OrchestratorError):
+    """Raised when context or runtime state transition validation fails."""
 
-    async def retrieve(self, request: ChatRequest, context: ConversationContext | None = None, **kwargs: Any) -> Any:
-        """Retrieve supporting context for the current request."""
+    pass
 
 
-@runtime_checkable
-class MemoryGateway(Protocol):
-    """Boundary for durable memory coordination."""
+class HealthCheckError(OrchestratorError):
+    """Raised when an orchestrator component health probe fails."""
 
-    async def load(self, context: ConversationContext | None = None, **kwargs: Any) -> list[MemoryRecord]:
-        """Load memory records relevant to the current request."""
-
-    async def save(self, records: list[MemoryRecord], **kwargs: Any) -> None:
-        """Persist memory records produced during orchestration."""
+    pass
 
 
-@runtime_checkable
-class PlannerGateway(Protocol):
-    """Boundary for planner coordination."""
+class BasePlanner(ABC):
+    """Abstract interface defining the contract for workflow plan generation."""
 
-    async def build_plan(self, request: ChatRequest, context: ConversationContext | None = None, **kwargs: Any) -> PlannerResponse:
-        """Build a plan for the current request."""
+    @abstractmethod
+    async def plan(self, request: ExecutionRequest) -> ExecutionPlan:
+        """Generate an ExecutionPlan DAG/sequence from an ExecutionRequest.
 
+        Args:
+            request: ExecutionRequest model specifying high-level task goal.
 
-@runtime_checkable
-class ToolRegistry(Protocol):
-    """Boundary for discovering available tools without hardcoding them."""
-
-    def list_tool_names(self, **kwargs: Any) -> list[str]:
-        """Return the names of available tools."""
-
-    def has_tool(self, tool_name: str, **kwargs: Any) -> bool:
-        """Return True when a tool is registered."""
+        Returns:
+            ExecutionPlan: Generated execution plan entity.
+        """
+        ...
 
 
-@runtime_checkable
-class NavigationGateway(Protocol):
-    """Boundary for navigation coordination."""
+class BaseRouter(ABC):
+    """Abstract interface defining the contract for step destination routing."""
 
-    async def resolve(self, request: ChatRequest, context: ConversationContext | None = None, **kwargs: Any) -> NavigationState:
-        """Resolve the next navigation state."""
+    @abstractmethod
+    async def route(self, step: ExecutionStep) -> ExecutionTarget:
+        """Determine target subsystem execution destination for a workflow step.
+
+        Args:
+            step: ExecutionStep model to route.
+
+        Returns:
+            ExecutionTarget: Target execution subsystem enum value.
+        """
+        ...
 
 
-@runtime_checkable
-class ToolGateway(Protocol):
-    """Boundary for tool lookup and execution coordination."""
+class BaseExecutionHandler(ABC):
+    """Abstract interface for target-specific step execution handlers."""
 
-    async def execute(self, tool_call: ToolCall, **kwargs: Any) -> ToolResult:
-        """Execute a structured tool call and return the result."""
+    @abstractmethod
+    async def execute(
+        self,
+        step: ExecutionStep,
+        context: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Execute a single workflow step and return output parameters.
+
+        Args:
+            step: ExecutionStep model to execute.
+            context: Immutable ExecutionContext runtime state.
+
+        Returns:
+            dict[str, Any]: Output parameters dictionary.
+        """
+        ...
+
+
+class BaseExecutor(ABC):
+    """Abstract interface defining the contract for workflow execution engine."""
+
+    @abstractmethod
+    async def execute(self, plan: ExecutionPlan) -> ExecutionResult:
+        """Execute an ExecutionPlan sequence and return final result.
+
+        Args:
+            plan: ExecutionPlan model to execute.
+
+        Returns:
+            ExecutionResult: Final outcome result model.
+        """
+        ...
+
+    @abstractmethod
+    async def cancel(self, plan_id: UUID) -> None:
+        """Cancel ongoing execution of a running plan.
+
+        Args:
+            plan_id: Unique plan identifier UUID to cancel.
+        """
+        ...
 
 
 class BaseOrchestrator(ABC):
-    """Abstract orchestration boundary for the AI brain.
-
-    Concrete implementations should only coordinate dependencies. Business logic,
-    policy, and domain behavior must live in injected collaborators.
-    """
+    """Abstract top-level interface defining the complete Orchestrator subsystem contract."""
 
     @abstractmethod
-    async def orchestrate(self, request: ChatRequest, **kwargs: Any) -> ChatResponse:
-        """Execute the orchestration flow for a chat request."""
-        raise NotImplementedError
+    async def initialize(self) -> None:
+        """Initialize orchestrator runtime resources and sub-components."""
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close orchestrator runtime and release resources."""
+        ...
+
+    @abstractmethod
+    async def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        """Process an ExecutionRequest from planning through execution to result.
+
+        Args:
+            request: ExecutionRequest model payload.
+
+        Returns:
+            ExecutionResult: Outcome result model.
+        """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """Check operational health across orchestrator sub-components.
+
+        Returns:
+            bool: True if healthy, False otherwise.
+        """
+        ...
