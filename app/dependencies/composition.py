@@ -35,6 +35,12 @@ from app.orchestrator.models import OrchestratorContext, OrchestratorResponse
 from app.orchestrator.router import RouterService
 from app.orchestrator.service import OrchestratorService
 from app.orchestrator.store import OrchestratorStore
+from app.orchestrator.providers.booking_handler import BookingHandler
+from app.orchestrator.providers.intent_router import IntentRouter
+from app.orchestrator.providers.llm_chat_handler import LLMChatHandler
+from app.orchestrator.providers.llm_intent_detector import LLMIntentDetector
+from app.orchestrator.providers.navigation_handler import NavigationHandler
+from app.orchestrator.providers.rag_handler import RAGHandler
 from app.rag.embeddings import EmbeddingService
 from app.rag.retriever import RetrieverService
 from app.rag.service import RAGService
@@ -49,7 +55,6 @@ from app.rag.vectordb import VectorStoreService
 
 from app.agent.base import BaseAgentExecutor, BaseAgentPlanner
 from app.navigation.base import BaseNavigationAnalyzer, BaseNavigationPlanner
-from app.orchestrator.base import BaseIntentDetector, BaseRouter
 from app.rag.contracts import BaseEmbeddingProvider, BaseVectorStore
 
 
@@ -113,20 +118,7 @@ class _StubNavigationAnalyzer(BaseNavigationAnalyzer):
         return ()
 
 
-class _StubIntentDetector(BaseIntentDetector):
-    """No-op intent detector stub — replace with LLM-backed classifier."""
 
-    async def detect(self, request):  # type: ignore[override]
-        from app.orchestrator.models import DetectedIntent, IntentType
-        return DetectedIntent(intent_type=IntentType.UNKNOWN, confidence=0.0)
-
-
-class _StubRouter(BaseRouter):
-    """No-op router stub — replace with intent-to-service mapping logic."""
-
-    async def route(self, intent, context):  # type: ignore[override]
-        from app.orchestrator.models import ExecutionRoute
-        return ExecutionRoute(intent=intent.intent_type, services=("agent_service",))
 
 
 # ---------------------------------------------------------------------------
@@ -194,72 +186,22 @@ agent_service = AgentService(
 # No direct service attributes are accessed here — only the OrchestratorContext
 # is passed through, keeping handler signatures uniform.
 
-async def _agent_handler(ctx: OrchestratorContext) -> OrchestratorResponse:
-    """Route execution to the Agent Core subsystem."""
-    from app.agent.models import AgentTask
-    task = AgentTask(
-        user_input=ctx.metadata.get("user_input", ""),
-        task_id=ctx.request_id,
-    )
-    result = await agent_service.run(
-        task=task,
-        conversation_id=ctx.request_id,
-        session_id=ctx.session_id,
-    )
-    return OrchestratorResponse(
-        request_id=ctx.request_id,
-        success=result.success,
-        response=result.output,
-        metadata={"handler": "agent_service", "task_id": str(result.task_id)},
-    )
+from app.dependencies.providers import get_ai_service
 
-
-async def _rag_handler(ctx: OrchestratorContext) -> OrchestratorResponse:
-    """Route execution to the RAG subsystem for information retrieval."""
-    from app.rag.models import RetrievalRequest
-    query = str(ctx.metadata.get("user_input", ""))
-    request = RetrievalRequest(query=query)
-    rag_context = await rag_service.retrieve(request)
-    return OrchestratorResponse(
-        request_id=ctx.request_id,
-        success=True,
-        response=rag_context.answer if hasattr(rag_context, "answer") else str(rag_context),
-        metadata={"handler": "rag_service"},
-    )
-
-
-async def _navigation_handler(ctx: OrchestratorContext) -> OrchestratorResponse:
-    """Route execution to the Navigation Intelligence subsystem."""
-    return OrchestratorResponse(
-        request_id=ctx.request_id,
-        success=True,
-        response="Navigation task dispatched.",
-        metadata={"handler": "navigation_service"},
-    )
-
-
-async def _browser_handler(ctx: OrchestratorContext) -> OrchestratorResponse:
-    """Route execution to the Browser Automation subsystem."""
-    return OrchestratorResponse(
-        request_id=ctx.request_id,
-        success=True,
-        response="Browser automation task dispatched.",
-        metadata={"handler": "browser_service"},
-    )
-
+_ai_service_instance = get_ai_service()
 
 _execution_engine = OrchestratorExecutionEngine()
-_execution_engine.register_handler("agent_service", _agent_handler)
-_execution_engine.register_handler("rag_service", _rag_handler)
-_execution_engine.register_handler("navigation_service", _navigation_handler)
-_execution_engine.register_handler("browser_service", _browser_handler)
+_execution_engine.register_handler("llm_service", LLMChatHandler(ai_service=_ai_service_instance))
+_execution_engine.register_handler("rag_service", RAGHandler(rag_service=rag_service, ai_service=_ai_service_instance))
+_execution_engine.register_handler("navigation_service", NavigationHandler(navigation_service=navigation_service))
+_execution_engine.register_handler("agent_service", BookingHandler(agent_service=agent_service))
 
 # ---------------------------------------------------------------------------
 # Orchestrator Subsystem
 # ---------------------------------------------------------------------------
 
-_intent_service = IntentDetectionService(detector=_StubIntentDetector())
-_router_service = RouterService(router=_StubRouter())
+_intent_service = IntentDetectionService(detector=LLMIntentDetector(ai_service=_ai_service_instance))
+_router_service = RouterService(router=IntentRouter())
 _execution_manager = ExecutionManager(manager=_execution_engine)
 _orchestrator_store = OrchestratorStore()
 
