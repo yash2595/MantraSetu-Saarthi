@@ -1,194 +1,166 @@
-"""Browser Subsystem Service Facade for MantraSetu AgentOS.
+"""Browser Automation Application Service facade for MantraSetu AgentOS.
 
-This module provides the BrowserService class as the primary entry point for the Browser subsystem,
-wiring together BrowserRegistry, BrowserSessionManager, BrowserExecutor, and BrowserController
-via dependency injection without performing browser automation directly.
+This module implements BrowserService as the primary facade layer exposing browser operations,
+page navigation, element interaction actions, and operational health monitoring.
 """
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from app.browser.base import (
-    BaseBrowserEngine,
+    BaseBrowserClient,
     BaseBrowserExecutor,
-    BaseBrowserSession,
     BrowserError,
+    BrowserInitializationError,
 )
-from app.browser.controller import BrowserController
 from app.browser.models import (
-    BrowserAction,
-    BrowserBatch,
-    BrowserResult,
-    BrowserSession,
+    BrowserActionResult,
+    BrowserPage,
 )
-from app.browser.registry import BrowserRegistry
+from app.core.models import ComponentHealth, SystemHealthStatus
+from app.navigation.models import NavigationAction
 
 
-class BrowserService(BaseBrowserEngine):
-    """Subsystem facade implementing BaseBrowserEngine contract.
+class BrowserService:
+    """Application facade service coordinating Browser Automation subsystem components.
 
     Responsibility:
-        Composes and exposes the Browser subsystem. Resolves provider session managers and executors
-        from BrowserRegistry, delegates session lifecycle calls to BaseBrowserSession, and delegates
-        action/batch execution calls to BrowserController.
+        Exposes high-level browser operations (page loading, action execution, active page retrieval)
+        by orchestrating injected BaseBrowserClient and BaseBrowserExecutor dependencies.
     """
 
-    def __init__(self, registry: BrowserRegistry) -> None:
-        """Initialize BrowserService with an injected BrowserRegistry.
+    def __init__(
+        self,
+        client: BaseBrowserClient,
+        executor: BaseBrowserExecutor,
+    ) -> None:
+        """Initialize BrowserService with injected client driver and action executor.
 
         Args:
-            registry: BrowserRegistry instance holding registered provider implementations.
+            client: Injected BaseBrowserClient instance.
+            executor: Injected BaseBrowserExecutor instance.
         """
-        self._registry = registry
-        self._session_manager: BaseBrowserSession | None = None
-        self._executor: BaseBrowserExecutor | None = None
-        self._controller: BrowserController | None = None
+        self._client = client
+        self._executor = executor
         self._initialized = False
 
     def _require_initialized(self) -> None:
         """Verify that the browser service has been initialized.
 
         Raises:
-            BrowserError: If initialize() has not been called.
+            BrowserInitializationError: If initialize() has not been called.
         """
-        if not self._initialized or not self._session_manager or not self._controller:
-            raise BrowserError(
-                "BrowserService is not initialized. Call initialize(provider) first."
+        if not self._initialized:
+            raise BrowserInitializationError(
+                "BrowserService is not initialized. Call initialize() first."
             )
 
-    async def initialize(self, provider: str = "default") -> None:
-        """Initialize the subsystem for a specified provider.
+    async def initialize(self) -> None:
+        """Initialize browser service and underlying client runtime state. Idempotent."""
+        if self._initialized:
+            return
 
-        Resolves the provider session manager and executor from BrowserRegistry, constructs the
-        BrowserController, and initializes all component resources.
+        if hasattr(self._client, "initialize"):
+            await self._client.initialize()
+        if hasattr(self._executor, "initialize"):
+            await self._executor.initialize()
 
-        Args:
-            provider: Registered provider identifier string (e.g. 'playwright', 'mock').
-
-        Raises:
-            BrowserError: If provider resolution or component initialization fails.
-        """
-        self._session_manager = await self._registry.get_session_manager(provider)
-        self._executor = await self._registry.get_executor(provider)
-
-        self._controller = BrowserController(
-            session_manager=self._session_manager,
-            executor=self._executor,
-        )
-
-        await self._controller.initialize()
         self._initialized = True
 
     async def close(self) -> None:
-        """Close and gracefully release all subsystem controller, executor, and session resources."""
-        if self._controller:
-            await self._controller.close()
-            self._controller = None
+        """Close browser service and release client connections and browser resources."""
+        if hasattr(self._executor, "close"):
+            await self._executor.close()
+        if hasattr(self._client, "close"):
+            await self._client.close()
 
-        self._executor = None
-        self._session_manager = None
         self._initialized = False
 
-    async def health_check(self) -> bool:
-        """Check operational health across the service and controller hierarchy.
-
-        Returns:
-            bool: True if initialized and controller health check passes, False otherwise.
-        """
-        if not self._initialized or not self._controller:
-            return False
-        return await self._controller.health_check()
-
-    async def create_session(
-        self,
-        user_agent: str | None = None,
-        viewport_width: int = 1280,
-        viewport_height: int = 720,
-    ) -> BrowserSession:
-        """Create a new browser session via the session manager.
+    async def open_page(self, url: str) -> BrowserPage:
+        """Navigate browser driver to target URL and return loaded page snapshot model.
 
         Args:
-            user_agent: Optional User-Agent string.
-            viewport_width: Viewport width in pixels.
-            viewport_height: Viewport height in pixels.
+            url: Target URL string.
 
         Returns:
-            BrowserSession: Created session entity.
+            BrowserPage: Loaded browser page domain model.
+
+        Raises:
+            BrowserInitializationError: If service is uninitialized.
+            BrowserError: If URL is blank or navigation fails.
         """
         self._require_initialized()
-        assert self._session_manager is not None
-        return await self._session_manager.create_session(
-            user_agent=user_agent,
-            viewport_width=viewport_width,
-            viewport_height=viewport_height,
-        )
+        if not url or not url.strip():
+            raise BrowserError("URL parameter string cannot be empty or blank.")
 
-    async def get_session(self, session_id: UUID) -> BrowserSession | None:
-        """Retrieve a managed browser session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID.
-
-        Returns:
-            BrowserSession | None: Session model if found, None otherwise.
-        """
-        self._require_initialized()
-        assert self._session_manager is not None
-        return await self._session_manager.get_session(session_id)
-
-    async def close_session(self, session_id: UUID) -> None:
-        """Close a managed browser session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID to close.
-        """
-        self._require_initialized()
-        assert self._session_manager is not None
-        await self._session_manager.close_session(session_id)
-
-    async def list_sessions(self) -> tuple[BrowserSession, ...]:
-        """List all managed browser session instances.
-
-        Returns:
-            tuple[BrowserSession, ...]: Immutable tuple of BrowserSession models.
-        """
-        self._require_initialized()
-        assert self._session_manager is not None
-        return await self._session_manager.list_sessions()
+        try:
+            return await self._client.open_page(url)
+        except BrowserError:
+            raise
+        except Exception as e:
+            raise BrowserError(f"BrowserService failed to open page '{url}': {str(e)}") from e
 
     async def execute_action(
         self,
-        session_id: UUID,
-        action: BrowserAction,
-    ) -> BrowserResult:
-        """Delegate action execution to BrowserController.
+        action: NavigationAction,
+    ) -> BrowserActionResult:
+        """Execute a NavigationAction command through the injected browser executor.
 
         Args:
-            session_id: Target session identifier UUID.
-            action: BrowserAction command model.
+            action: NavigationAction model command.
 
         Returns:
-            BrowserResult: Execution outcome result model.
+            BrowserActionResult: Action execution outcome result model.
+
+        Raises:
+            BrowserInitializationError: If service is uninitialized.
+            BrowserError: If action parameter is invalid or execution fails.
         """
         self._require_initialized()
-        assert self._controller is not None
-        return await self._controller.execute_action(session_id, action)
+        if not isinstance(action, NavigationAction):
+            raise BrowserError("Invalid NavigationAction instance provided.")
 
-    async def execute_batch(
-        self,
-        session_id: UUID,
-        batch: BrowserBatch,
-    ) -> tuple[BrowserResult, ...]:
-        """Delegate batch action sequence execution to BrowserController.
+        try:
+            return await self._executor.execute(action)
+        except BrowserError:
+            raise
+        except Exception as e:
+            raise BrowserError(f"BrowserService action execution failed: {str(e)}") from e
 
-        Args:
-            session_id: Target session identifier UUID.
-            batch: BrowserBatch command model sequence.
+    async def get_current_page(self) -> BrowserPage | None:
+        """Retrieve snapshot of the current active browser page.
 
         Returns:
-            tuple[BrowserResult, ...]: Tuple of execution results for each action.
+            BrowserPage | None: Active page model if loaded, None otherwise.
+
+        Raises:
+            BrowserInitializationError: If service is uninitialized.
         """
         self._require_initialized()
-        assert self._controller is not None
-        return await self._controller.execute_batch(session_id, batch)
+        return await self._client.get_current_page()
+
+    async def health_check(self) -> ComponentHealth:
+        """Check operational health of the browser service and underlying driver client.
+
+        Returns:
+            ComponentHealth: Operational component health status model.
+        """
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="browser_service",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="BrowserService uninitialized.",
+            )
+
+        client_health = await self._client.health_check()
+        is_healthy = (
+            isinstance(client_health, ComponentHealth)
+            and client_health.status == SystemHealthStatus.HEALTHY
+        )
+
+        return ComponentHealth(
+            component_name="browser_service",
+            status=SystemHealthStatus.HEALTHY if is_healthy else SystemHealthStatus.UNHEALTHY,
+            message="BrowserService operational."
+            if is_healthy
+            else "BrowserService client driver degraded.",
+        )

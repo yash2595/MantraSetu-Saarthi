@@ -1,334 +1,168 @@
-"""Abstract contracts and interfaces for the Browser automation subsystem in MantraSetu AgentOS.
+"""Abstract contracts and interfaces for the Browser Automation subsystem in MantraSetu AgentOS.
 
-This module defines abstract base classes for browser session management, action execution,
-and engine orchestration alongside domain exception hierarchies, enforcing Dependency Inversion.
+This module defines abstract base classes for browser automation clients and action executors
+alongside domain exception hierarchies for browser management.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
-from uuid import UUID
 
 from app.browser.models import (
-    BaseBrowserModel,
-    BrowserAction,
-    BrowserBatch,
-    BrowserResult,
-    BrowserSession,
-    _utc_now,
+    BrowserActionResult,
+    BrowserPage,
 )
-
-
-class BrowserRuntimeHandle(BaseBrowserModel):
-    """Public framework-independent handle representing active runtime browser handles.
-
-    Attributes:
-        session_id: Unique session identifier UUID.
-        browser: Placeholder for active browser instance.
-        context: Placeholder for active browser context instance.
-        page: Placeholder for active page instance.
-        created_at: UTC timestamp when the handle was created.
-    """
-
-    session_id: UUID
-    browser: Any | None = None
-    context: Any | None = None
-    page: Any | None = None
+from app.core.models import ComponentHealth
+from app.navigation.models import NavigationAction
 
 
 class BrowserError(Exception):
-    """Base exception for all browser subsystem errors."""
+    """Base exception for all browser automation subsystem errors."""
 
     pass
 
 
 class BrowserSessionError(BrowserError):
-    """Base exception raised for session management errors."""
+    """Raised when browser session creation or management fails."""
 
     pass
 
 
-class SessionNotFoundError(BrowserSessionError):
-    """Raised when a requested browser session cannot be found."""
+class BrowserNavigationError(BrowserError):
+    """Raised when page opening or URL navigation fails."""
 
     pass
 
 
 class BrowserExecutionError(BrowserError):
-    """Base exception raised for action or batch execution failures."""
+    """Raised when element interaction or action execution fails."""
 
     pass
 
 
-class ActionExecutionError(BrowserExecutionError):
-    """Raised when an individual browser action fails to execute."""
+class BrowserInitializationError(BrowserError):
+    """Raised when browser client component initialization fails."""
 
     pass
 
 
-class BatchExecutionError(BrowserExecutionError):
-    """Raised when a batch of browser actions fails to execute completely."""
-
-    pass
-
-
-class BaseBrowserSession(ABC):
-    """Abstract interface defining the contract for browser session lifecycle management.
-
-    Responsibility:
-        Establishes session initialization, creation, retrieval, listing, health monitoring,
-        runtime handle access, and closure operations.
-    """
+class BaseBrowserClient(ABC):
+    """Abstract interface defining the contract for browser automation drivers."""
 
     @abstractmethod
     async def initialize(self) -> None:
-        """Initialize session manager resources and background processes."""
+        """Initialize browser driver and launch browser instance."""
         ...
 
     @abstractmethod
     async def close(self) -> None:
-        """Close session manager resources and terminate active sessions."""
+        """Close browser instance, context, and driver connections."""
         ...
 
     @abstractmethod
-    async def create_session(
-        self,
-        user_agent: str | None = None,
-        viewport_width: int = 1280,
-        viewport_height: int = 720,
-    ) -> BrowserSession:
-        """Create and initialize a new browser session instance.
+    async def open_page(self, url: str) -> BrowserPage:
+        """Navigate browser to target URL and return page snapshot model.
 
         Args:
-            user_agent: Optional User-Agent header string.
-            viewport_width: Viewport width in pixels.
-            viewport_height: Viewport height in pixels.
+            url: Target URL string.
 
         Returns:
-            BrowserSession: Created browser session entity.
+            BrowserPage: Loaded browser page domain model.
+
+        Raises:
+            BrowserNavigationError: If page navigation fails.
         """
         ...
 
     @abstractmethod
-    async def get_session(self, session_id: UUID) -> BrowserSession | None:
-        """Retrieve an active or stored browser session by its identifier.
+    async def click(self, selector: str) -> None:
+        """Click element matching target CSS selector or text description.
 
         Args:
-            session_id: Unique session identifier UUID.
+            selector: CSS selector or element text identifier.
 
-        Returns:
-            BrowserSession | None: Session instance if found, None otherwise.
+        Raises:
+            BrowserExecutionError: If element click fails.
         """
         ...
 
     @abstractmethod
-    async def get_runtime_handle(self, session_id: UUID) -> BrowserRuntimeHandle | None:
-        """Retrieve the public runtime handle for an active browser session.
+    async def fill(self, selector: str, value: str) -> None:
+        """Fill input element matching selector with target text value.
 
         Args:
-            session_id: Unique session identifier UUID.
+            selector: CSS selector or element input identifier.
+            value: Text value string to input.
 
-        Returns:
-            BrowserRuntimeHandle | None: Runtime handle if active, None otherwise.
+        Raises:
+            BrowserExecutionError: If input filling fails.
         """
         ...
 
     @abstractmethod
-    async def close_session(self, session_id: UUID) -> None:
-        """Close and release an active browser session.
+    async def select(self, selector: str, value: str) -> None:
+        """Select option value in dropdown element matching selector.
 
         Args:
-            session_id: Unique session identifier UUID to close.
+            selector: CSS selector or element select identifier.
+            value: Option value string to select.
+
+        Raises:
+            BrowserExecutionError: If dropdown selection fails.
         """
         ...
 
     @abstractmethod
-    async def list_sessions(self) -> tuple[BrowserSession, ...]:
-        """List all active and managed browser sessions.
+    async def capture_screenshot(self, path: str | None = None) -> str:
+        """Capture screenshot of the current page and return file path.
+
+        Args:
+            path: Optional target file path string.
 
         Returns:
-            tuple[BrowserSession, ...]: Immutable tuple of active BrowserSession objects.
+            str: Absolute file path string of saved screenshot.
+
+        Raises:
+            BrowserExecutionError: If screenshot capture fails.
         """
         ...
 
     @abstractmethod
-    async def health_check(self) -> bool:
-        """Check the operational health of the session manager.
+    async def get_current_page(self) -> BrowserPage | None:
+        """Retrieve snapshot of the current active browser page.
 
         Returns:
-            bool: True if healthy, False otherwise.
+            BrowserPage | None: Active page model if loaded, None otherwise.
+        """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> ComponentHealth:
+        """Perform an operational health check on the browser client driver.
+
+        Returns:
+            ComponentHealth: Operational component health status model.
         """
         ...
 
 
 class BaseBrowserExecutor(ABC):
-    """Abstract interface defining the contract for executing browser actions and batches.
-
-    Responsibility:
-        Handles execution of single browser actions, action batches, cancellation,
-        and execution health checks.
-    """
+    """Abstract interface defining the contract for browser action execution engines."""
 
     @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize executor driver dependencies and resources."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close executor driver dependencies and release resources."""
-        ...
-
-    @abstractmethod
-    async def execute_action(
+    async def execute(
         self,
-        session_id: UUID,
-        action: BrowserAction,
-    ) -> BrowserResult:
-        """Execute a single browser action command within a session context.
+        action: NavigationAction,
+    ) -> BrowserActionResult:
+        """Execute a NavigationAction command through browser client driver.
 
         Args:
-            session_id: Target session identifier UUID.
-            action: BrowserAction command to execute.
+            action: NavigationAction model command.
 
         Returns:
-            BrowserResult: Execution outcome result model.
-        """
-        ...
+            BrowserActionResult: Action execution outcome result model.
 
-    @abstractmethod
-    async def execute_batch(
-        self,
-        session_id: UUID,
-        batch: BrowserBatch,
-    ) -> tuple[BrowserResult, ...]:
-        """Execute a batch sequence of browser actions within a session context.
-
-        Args:
-            session_id: Target session identifier UUID.
-            batch: BrowserBatch sequence of actions to execute.
-
-        Returns:
-            tuple[BrowserResult, ...]: Immutable tuple of execution results for each action.
-        """
-        ...
-
-    @abstractmethod
-    async def cancel(self, session_id: UUID) -> None:
-        """Cancel ongoing action or batch execution for a given session.
-
-        Args:
-            session_id: Unique session identifier UUID to cancel.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational availability and driver health of the executor.
-
-        Returns:
-            bool: True if healthy, False otherwise.
-        """
-        ...
-
-
-class BaseBrowserEngine(ABC):
-    """Abstract top-level interface defining the complete Browser Engine contract.
-
-    Responsibility:
-        Combines session lifecycle management and action execution capabilities into a unified facade.
-    """
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize the browser engine runtime components."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close and release all engine session and executor resources."""
-        ...
-
-    @abstractmethod
-    async def create_session(
-        self,
-        user_agent: str | None = None,
-        viewport_width: int = 1280,
-        viewport_height: int = 720,
-    ) -> BrowserSession:
-        """Create a new browser session managed by the engine.
-
-        Args:
-            user_agent: Optional User-Agent string.
-            viewport_width: Viewport width in pixels.
-            viewport_height: Viewport height in pixels.
-
-        Returns:
-            BrowserSession: Created session entity.
-        """
-        ...
-
-    @abstractmethod
-    async def get_session(self, session_id: UUID) -> BrowserSession | None:
-        """Retrieve a managed browser session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID.
-
-        Returns:
-            BrowserSession | None: Session entity if found, None otherwise.
-        """
-        ...
-
-    @abstractmethod
-    async def close_session(self, session_id: UUID) -> None:
-        """Close a managed browser session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID to close.
-        """
-        ...
-
-    @abstractmethod
-    async def execute_action(
-        self,
-        session_id: UUID,
-        action: BrowserAction,
-    ) -> BrowserResult:
-        """Execute a browser action command within the specified session.
-
-        Args:
-            session_id: Target session identifier UUID.
-            action: BrowserAction command to execute.
-
-        Returns:
-            BrowserResult: Execution outcome result model.
-        """
-        ...
-
-    @abstractmethod
-    async def execute_batch(
-        self,
-        session_id: UUID,
-        batch: BrowserBatch,
-    ) -> tuple[BrowserResult, ...]:
-        """Execute a batch sequence of browser actions within the specified session.
-
-        Args:
-            session_id: Target session identifier UUID.
-            batch: BrowserBatch sequence to execute.
-
-        Returns:
-            tuple[BrowserResult, ...]: Tuple of execution results.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational health of the overall browser engine.
-
-        Returns:
-            bool: True if engine components are healthy, False otherwise.
+        Raises:
+            BrowserExecutionError: If action mapping or execution fails.
         """
         ...

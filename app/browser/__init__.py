@@ -1,67 +1,41 @@
-"""Browser automation domain subsystem for MantraSetu AgentOS."""
+"""Browser Automation subsystem for MantraSetu AgentOS."""
 
 from app.browser.base import (
-    ActionExecutionError,
-    BaseBrowserEngine,
+    BaseBrowserClient,
     BaseBrowserExecutor,
-    BaseBrowserSession,
-    BatchExecutionError,
     BrowserError,
     BrowserExecutionError,
-    BrowserRuntimeHandle,
+    BrowserInitializationError,
+    BrowserNavigationError,
     BrowserSessionError,
-    SessionNotFoundError,
 )
-from app.browser.controller import BrowserController
 from app.browser.executor import BrowserExecutor
 from app.browser.models import (
     BaseBrowserModel,
-    BrowserAction,
-    BrowserActionType,
-    BrowserBatch,
-    BrowserExecutionStatus,
-    BrowserResult,
+    BrowserActionResult,
+    BrowserActionResultStatus,
+    BrowserPage,
     BrowserSession,
-    BrowserSessionStatus,
-    ElementReference,
-    Metadata,
+    BrowserStatus,
 )
-from app.browser.registry import (
-    BrowserRegistry,
-    BrowserRegistryError,
-    ProviderAlreadyRegisteredError,
-    ProviderNotFoundError,
-)
+from app.browser.playwright_client import PlaywrightBrowserClient
 from app.browser.service import BrowserService
-from app.browser.session import BrowserSessionManager
 
 __all__ = [
     "BaseBrowserModel",
-    "BrowserActionType",
-    "BrowserExecutionStatus",
-    "BrowserSessionStatus",
-    "ElementReference",
-    "BrowserAction",
-    "BrowserResult",
+    "BrowserStatus",
+    "BrowserActionResultStatus",
     "BrowserSession",
-    "BrowserBatch",
-    "Metadata",
-    "BrowserRuntimeHandle",
-    "BaseBrowserSession",
+    "BrowserPage",
+    "BrowserActionResult",
+    "BaseBrowserClient",
     "BaseBrowserExecutor",
-    "BaseBrowserEngine",
-    "BrowserSessionManager",
+    "PlaywrightBrowserClient",
     "BrowserExecutor",
-    "BrowserController",
-    "BrowserRegistry",
-    "BrowserRegistryError",
-    "ProviderAlreadyRegisteredError",
-    "ProviderNotFoundError",
     "BrowserService",
     "BrowserError",
     "BrowserSessionError",
-    "SessionNotFoundError",
+    "BrowserNavigationError",
     "BrowserExecutionError",
-    "ActionExecutionError",
-    "BatchExecutionError",
+    "BrowserInitializationError",
 ]
