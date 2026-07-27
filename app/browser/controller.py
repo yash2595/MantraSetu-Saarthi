@@ -14,7 +14,7 @@ from app.browser.base import (
     BaseBrowserSession,
     BatchExecutionError,
     BrowserExecutionError,
-    SessionNotFoundError,
+    SessionResourceNotFoundError,
 )
 from app.browser.models import (
     BrowserAction,
@@ -88,7 +88,7 @@ class BrowserController:
 
         Raises:
             BrowserExecutionError: If controller is uninitialized or validation fails.
-            SessionNotFoundError: If the session does not exist.
+            SessionResourceNotFoundError: If the session does not exist.
             ActionExecutionError: If action parameters are invalid or action fails.
         """
         self._require_initialized()
@@ -113,7 +113,7 @@ class BrowserController:
 
         Raises:
             BrowserExecutionError: If controller is uninitialized or validation fails.
-            SessionNotFoundError: If the session does not exist.
+            SessionResourceNotFoundError: If the session does not exist.
             BatchExecutionError: If batch parameters are invalid or batch execution fails.
         """
         self._require_initialized()
@@ -147,12 +147,12 @@ class BrowserController:
             BrowserSession: Validated active session instance.
 
         Raises:
-            SessionNotFoundError: If session is missing.
+            SessionResourceNotFoundError: If session is missing.
             ActionExecutionError: If session is not ACTIVE.
         """
         session = await self._session_manager.get_session(session_id)
         if not session:
-            raise SessionNotFoundError(f"Browser session {session_id} not found.")
+            raise SessionResourceNotFoundError(f"Browser session {session_id} not found.")
 
         if session.status != BrowserSessionStatus.ACTIVE:
             raise ActionExecutionError(

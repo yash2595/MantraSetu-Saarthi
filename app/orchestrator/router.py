@@ -1,86 +1,128 @@
-"""Orchestrator Router module for MantraSetu AgentOS.
+"""Router Service orchestration layer for MantraSetu AgentOS.
 
-This module implements OrchestratorRouter for deterministically routing an ExecutionStep
-to its corresponding target subsystem enum without performing step execution or keyword inference.
+This module implements RouterService, coordinating intent-to-service execution route resolution
+with an injected BaseRouter provider without LLM SDK or browser dependencies.
 """
 
 from __future__ import annotations
 
-from app.orchestrator.base import BaseRouter, RoutingError
+from app.core.models import ComponentHealth, SystemHealthStatus
+from app.orchestrator.base import (
+    BaseRouter,
+    OrchestratorInitializationError,
+    RoutingError,
+)
 from app.orchestrator.models import (
-    ActionType,
-    ExecutionStep,
-    ExecutionTarget,
+    DetectedIntent,
+    ExecutionRoute,
+    OrchestratorContext,
 )
 
 
-class OrchestratorRouter(BaseRouter):
-    """Deterministic step router implementing BaseRouter contract.
+class RouterService:
+    """Service facade coordinating intent-to-service execution routing resolution.
 
     Responsibility:
-        Maps ExecutionStep models to their target ExecutionTarget subsystem enums
-        using explicit ActionType dispatch rules without performing step execution or AI reasoning.
+        Validates DetectedIntent and OrchestratorContext models, delegates route resolution
+        to an injected BaseRouter provider, translates routing errors into domain exceptions,
+        and manages operational lifecycle health.
     """
 
-    async def route(self, step: ExecutionStep) -> ExecutionTarget:
-        """Resolve the target ExecutionTarget subsystem enum for an ExecutionStep.
+    def __init__(self, router: BaseRouter) -> None:
+        """Initialize RouterService with an injected BaseRouter dependency.
 
         Args:
-            step: ExecutionStep model to route.
+            router: Injected BaseRouter implementation.
+        """
+        self._router = router
+        self._initialized = False
 
-        Returns:
-            ExecutionTarget: Target subsystem enum value.
+    def _require_initialized(self) -> None:
+        """Verify that the router service has been initialized.
 
         Raises:
-            RoutingError: If step validation fails or action type is unsupported.
+            OrchestratorInitializationError: If initialize() has not been called.
         """
-        self._validate_step(step)
-        return self._resolve_target(step.action_type)
-
-    def _validate_step(self, step: ExecutionStep) -> None:
-        """Validate input ExecutionStep integrity.
-
-        Args:
-            step: ExecutionStep instance to validate.
-
-        Raises:
-            RoutingError: If step is None or missing required identifiers.
-        """
-        if not step:
-            raise RoutingError("ExecutionStep cannot be None.")
-
-        if not step.step_id:
-            raise RoutingError("ExecutionStep missing required step_id.")
-
-        if not step.action_type:
-            raise RoutingError("ExecutionStep missing required action_type.")
-
-    def _resolve_target(self, action_type: ActionType) -> ExecutionTarget:
-        """Deterministically map an ActionType enum to its corresponding ExecutionTarget enum.
-
-        Args:
-            action_type: ActionType enum value.
-
-        Returns:
-            ExecutionTarget: Target execution subsystem enum value.
-
-        Raises:
-            RoutingError: If action_type cannot be resolved to a valid execution target.
-        """
-        target_map: dict[ActionType, ExecutionTarget] = {
-            ActionType.AI: ExecutionTarget.AI,
-            ActionType.NAVIGATION: ExecutionTarget.NAVIGATION,
-            ActionType.BROWSER: ExecutionTarget.BROWSER,
-            ActionType.TOOL: ExecutionTarget.TOOL,
-            ActionType.API: ExecutionTarget.SYSTEM,
-            ActionType.WAIT: ExecutionTarget.SYSTEM,
-            ActionType.USER_INPUT: ExecutionTarget.SYSTEM,
-        }
-
-        target = target_map.get(action_type)
-        if not target:
-            raise RoutingError(
-                f"Unsupported action_type '{action_type}' for subsystem routing."
+        if not self._initialized:
+            raise OrchestratorInitializationError(
+                "RouterService is not initialized. Call initialize() first."
             )
 
-        return target
+    async def initialize(self) -> None:
+        """Initialize router service and underlying provider runtime state. Idempotent."""
+        if self._initialized:
+            return
+
+        if hasattr(self._router, "initialize"):
+            await self._router.initialize()
+
+        self._initialized = True
+
+    async def close(self) -> None:
+        """Close router service and release provider resources."""
+        if hasattr(self._router, "close"):
+            await self._router.close()
+
+        self._initialized = False
+
+    async def route(
+        self,
+        intent: DetectedIntent,
+        context: OrchestratorContext,
+    ) -> ExecutionRoute:
+        """Validate inputs and resolve the execution service route via injected router provider.
+
+        Args:
+            intent: DetectedIntent model from intent classification stage.
+            context: Active OrchestratorContext model snapshot.
+
+        Returns:
+            ExecutionRoute: Resolved execution service routing plan model.
+
+        Raises:
+            OrchestratorInitializationError: If service is uninitialized.
+            RoutingError: If intent or context parameters are invalid or route resolution fails.
+        """
+        self._require_initialized()
+        if not isinstance(intent, DetectedIntent):
+            raise RoutingError("Invalid DetectedIntent instance provided.")
+        if not isinstance(context, OrchestratorContext):
+            raise RoutingError("Invalid OrchestratorContext instance provided.")
+
+        try:
+            return await self._router.route(intent, context)
+        except RoutingError:
+            raise
+        except Exception as e:
+            raise RoutingError(
+                f"Execution route resolution failed for intent '{intent.intent_type}': {str(e)}"
+            ) from e
+
+    async def health_check(self) -> ComponentHealth:
+        """Check operational health of the router service.
+
+        Returns:
+            ComponentHealth: Operational component health status model.
+        """
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="router_service",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="RouterService uninitialized.",
+            )
+
+        router_healthy = True
+        if hasattr(self._router, "health_check"):
+            res = await self._router.health_check()
+            if isinstance(res, ComponentHealth):
+                router_healthy = res.status == SystemHealthStatus.HEALTHY
+            elif isinstance(res, bool):
+                router_healthy = res
+
+        return ComponentHealth(
+            component_name="router_service",
+            status=SystemHealthStatus.HEALTHY if router_healthy else SystemHealthStatus.UNHEALTHY,
+            message="RouterService operational."
+            if router_healthy
+            else "RouterService provider degraded.",
+        )

@@ -1,26 +1,29 @@
 """Conversation Session Manager module for MantraSetu AgentOS.
 
-This module implements ConversationSessionManager for managing conversation session lifecycles,
+This module implements ConversationSessionManager and BaseSessionManager for managing conversation session lifecycles,
 thread-safe registration, context assignment, and session status transitions.
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
 from app.conversation.base import (
-    BaseConversationSession,
     ConversationClosedError,
+    ConversationError,
     ConversationInitializationError,
-    ConversationNotFoundError,
+    ConversationResourceNotFoundError,
+    ConversationValidationError,
 )
 from app.conversation.models import (
     ConversationContext,
     ConversationSession,
-    ConversationStatus,
+    ConversationSessionStatus,
 )
+from app.core.models import ComponentHealth, SystemHealthStatus
 
 
 def _utc_now() -> datetime:
@@ -32,12 +35,100 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class ConversationSessionManager(BaseConversationSession):
-    """Thread-safe conversation session manager implementing BaseConversationSession.
+class BaseSessionManager(ABC):
+    """Abstract interface defining the contract for conversation session lifecycle management."""
+
+    @abstractmethod
+    async def create_session(
+        self,
+        user_id: UUID | None = None,
+        conversation_id: UUID | None = None,
+        context: ConversationContext | None = None,
+    ) -> ConversationSession:
+        """Create and register a new ConversationSession instance.
+
+        Args:
+            user_id: Optional user identifier UUID.
+            conversation_id: Optional conversation identifier UUID.
+            context: Optional ConversationContext configuration.
+
+        Returns:
+            ConversationSession: Created session entity.
+        """
+        ...
+
+    @abstractmethod
+    async def get_session(self, session_id: UUID) -> ConversationSession:
+        """Retrieve a ConversationSession instance by identifier.
+
+        Args:
+            session_id: Unique session identifier UUID.
+
+        Returns:
+            ConversationSession: Retrieved session entity.
+
+        Raises:
+            ConversationResourceNotFoundError: If session_id is not found.
+        """
+        ...
+
+    @abstractmethod
+    async def update_context(
+        self,
+        session_id: UUID,
+        context: ConversationContext,
+    ) -> ConversationSession:
+        """Update active ConversationContext for a session.
+
+        Args:
+            session_id: Unique session identifier UUID.
+            context: New ConversationContext instance.
+
+        Returns:
+            ConversationSession: Updated session entity.
+
+        Raises:
+            ConversationResourceNotFoundError: If session_id is not found.
+            ConversationClosedError: If session is closed or archived.
+        """
+        ...
+
+    @abstractmethod
+    async def close_session(self, session_id: UUID) -> ConversationSession:
+        """Close and archive a ConversationSession by identifier.
+
+        Args:
+            session_id: Unique session identifier UUID to close.
+
+        Returns:
+            ConversationSession: Closed session entity.
+
+        Raises:
+            ConversationResourceNotFoundError: If session_id is not found.
+            ConversationClosedError: If session is already closed.
+        """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> ComponentHealth:
+        """Perform an operational health check on the session manager.
+
+        Returns:
+            ComponentHealth: Component health status model.
+        """
+        ...
+
+
+# Alias for backward compatibility
+BaseConversationSession = BaseSessionManager
+
+
+class ConversationSessionManager(BaseSessionManager):
+    """Thread-safe in-memory conversation session manager implementing BaseSessionManager contract.
 
     Responsibility:
-        Manages creation, retrieval, listing, status updating, and archiving of ConversationSession
-        objects without embedding AI prompt logic, browser automation, or memory storage.
+        Manages creation, retrieval, context updating, and lifecycle closing of ConversationSession
+        objects without embedding AI prompt logic, database queries, or memory storage.
     """
 
     def __init__(self) -> None:
@@ -58,38 +149,38 @@ class ConversationSessionManager(BaseConversationSession):
             )
 
     async def initialize(self) -> None:
-        """Initialize session manager runtime state.
-
-        Idempotent initialization: safely returns if already initialized without recreating registry.
-        """
+        """Initialize session manager runtime state. Idempotent."""
         async with self._lock:
             if self._initialized:
                 return
             self._initialized = True
 
     async def close(self) -> None:
-        """Close all managed conversation sessions, archive active sessions, and clear registry."""
+        """Close all managed conversation sessions and clear internal storage."""
         async with self._lock:
             for sid, session in list(self._sessions.items()):
-                if session.status == ConversationStatus.ACTIVE:
+                if session.status == ConversationSessionStatus.ACTIVE:
                     self._sessions[sid] = session.model_copy(
                         update={
-                            "status": ConversationStatus.ARCHIVED,
+                            "status": ConversationSessionStatus.CLOSED,
                             "updated_at": _utc_now(),
                         }
                     )
-
             self._sessions.clear()
             self._initialized = False
 
     async def create_session(
         self,
+        user_id: UUID | None = None,
+        conversation_id: UUID | None = None,
         context: ConversationContext | None = None,
     ) -> ConversationSession:
         """Create and register a new thread-safe ConversationSession.
 
         Args:
-            context: Optional ConversationContext configuration instance.
+            user_id: Optional associated user UUID.
+            conversation_id: Optional associated conversation UUID.
+            context: Optional ConversationContext configuration.
 
         Returns:
             ConversationSession: Created conversation session model.
@@ -100,58 +191,75 @@ class ConversationSessionManager(BaseConversationSession):
         self._require_initialized()
         async with self._lock:
             session = ConversationSession(
-                status=ConversationStatus.ACTIVE,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                status=ConversationSessionStatus.ACTIVE,
                 context=context or ConversationContext(),
             )
             self._sessions[session.session_id] = session
             return session
 
-    async def get_session(self, session_id: UUID) -> ConversationSession | None:
+    async def get_session(self, session_id: UUID) -> ConversationSession:
         """Retrieve a conversation session by identifier.
 
         Args:
             session_id: Unique session identifier UUID.
 
         Returns:
-            ConversationSession | None: Session model if found, None otherwise.
+            ConversationSession: Session model if found.
 
         Raises:
             ConversationInitializationError: If manager is uninitialized.
+            ConversationResourceNotFoundError: If session_id does not exist.
         """
         self._require_initialized()
+        if not isinstance(session_id, UUID):
+            raise ConversationValidationError("Invalid session_id UUID provided.")
+
         async with self._lock:
-            return self._sessions.get(session_id)
+            session = self._sessions.get(session_id)
+            if not session:
+                raise ConversationResourceNotFoundError(
+                    f"Conversation session '{session_id}' not found."
+                )
+            return session
 
     async def update_context(
         self,
         session_id: UUID,
         context: ConversationContext,
-    ) -> ConversationContext:
+    ) -> ConversationSession:
         """Update active conversation context settings for a session.
 
         Args:
             session_id: Unique session identifier UUID.
-            context: ConversationContext instance.
+            context: New ConversationContext instance.
 
         Returns:
-            ConversationContext: Updated conversation context model.
+            ConversationSession: Updated conversation session model.
 
         Raises:
             ConversationInitializationError: If manager is uninitialized.
-            ConversationNotFoundError: If session does not exist.
-            ConversationClosedError: If session is archived or closed.
+            ConversationResourceNotFoundError: If session_id does not exist.
+            ConversationClosedError: If session is closed or archived.
         """
         self._require_initialized()
+        if not isinstance(context, ConversationContext):
+            raise ConversationValidationError("Invalid ConversationContext instance provided.")
+
         async with self._lock:
-            if session_id not in self._sessions:
-                raise ConversationNotFoundError(
-                    f"Conversation session {session_id} does not exist."
+            existing = self._sessions.get(session_id)
+            if not existing:
+                raise ConversationResourceNotFoundError(
+                    f"Conversation session '{session_id}' not found."
                 )
 
-            existing = self._sessions[session_id]
-            if existing.status in (ConversationStatus.ARCHIVED, ConversationStatus.COMPLETED):
+            if existing.status in (
+                ConversationSessionStatus.CLOSED,
+                ConversationSessionStatus.ARCHIVED,
+            ):
                 raise ConversationClosedError(
-                    f"Conversation session {session_id} is already closed or archived."
+                    f"Conversation session '{session_id}' is already closed or archived."
                 )
 
             updated = existing.model_copy(
@@ -161,39 +269,46 @@ class ConversationSessionManager(BaseConversationSession):
                 }
             )
             self._sessions[session_id] = updated
-            return context
+            return updated
 
-    async def close_session(self, session_id: UUID) -> None:
+    async def close_session(self, session_id: UUID) -> ConversationSession:
         """Close and archive a conversation session by identifier.
 
         Args:
             session_id: Unique session identifier UUID to close.
 
+        Returns:
+            ConversationSession: Closed conversation session model.
+
         Raises:
-            ConversationNotFoundError: If the session is not registered.
-            ConversationClosedError: If the session is already archived or closed.
             ConversationInitializationError: If manager is uninitialized.
+            ConversationResourceNotFoundError: If session_id does not exist.
+            ConversationClosedError: If session is already closed.
         """
         self._require_initialized()
         async with self._lock:
-            if session_id not in self._sessions:
-                raise ConversationNotFoundError(
-                    f"Conversation session {session_id} does not exist."
+            existing = self._sessions.get(session_id)
+            if not existing:
+                raise ConversationResourceNotFoundError(
+                    f"Conversation session '{session_id}' not found."
                 )
 
-            existing = self._sessions[session_id]
-            if existing.status in (ConversationStatus.ARCHIVED, ConversationStatus.COMPLETED):
+            if existing.status in (
+                ConversationSessionStatus.CLOSED,
+                ConversationSessionStatus.ARCHIVED,
+            ):
                 raise ConversationClosedError(
-                    f"Conversation session {session_id} is already closed or archived."
+                    f"Conversation session '{session_id}' is already closed."
                 )
 
             closed_session = existing.model_copy(
                 update={
-                    "status": ConversationStatus.ARCHIVED,
+                    "status": ConversationSessionStatus.CLOSED,
                     "updated_at": _utc_now(),
                 }
             )
             self._sessions[session_id] = closed_session
+            return closed_session
 
     async def list_sessions(self) -> tuple[ConversationSession, ...]:
         """List all managed conversation session instances.
@@ -208,10 +323,16 @@ class ConversationSessionManager(BaseConversationSession):
         async with self._lock:
             return tuple(self._sessions.values())
 
-    async def health_check(self) -> bool:
+    async def health_check(self) -> ComponentHealth:
         """Check operational health of the session manager.
 
         Returns:
-            bool: True if initialized and functional, False otherwise.
+            ComponentHealth: Operational component health model.
         """
-        return self._initialized
+        return ComponentHealth(
+            component_name="session_manager",
+            status=SystemHealthStatus.HEALTHY if self._initialized else SystemHealthStatus.UNHEALTHY,
+            message="ConversationSessionManager operational."
+            if self._initialized
+            else "ConversationSessionManager uninitialized.",
+        )

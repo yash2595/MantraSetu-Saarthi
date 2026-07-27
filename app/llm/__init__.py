@@ -4,7 +4,7 @@ from app.llm.base import BaseLLM, BaseLLMProvider
 from app.llm.factory import (
     LLMProviderFactory,
     ProviderAlreadyRegisteredError,
-    ProviderNotFoundError,
+    ProviderResourceNotFoundError,
 )
 from app.llm.models import HealthStatus, LLMRequest, LLMResponse, TokenUsage
 from app.llm.settings import LLMSettings, get_llm_settings, llm_settings
@@ -21,7 +21,7 @@ __all__ = [
     # Factory & Exceptions
     "LLMProviderFactory",
     "ProviderAlreadyRegisteredError",
-    "ProviderNotFoundError",
+    "ProviderResourceNotFoundError",
     # Settings
     "LLMSettings",
     "get_llm_settings",

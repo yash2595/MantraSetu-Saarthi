@@ -24,7 +24,7 @@ class ProviderAlreadyRegisteredError(BrowserRegistryError):
     pass
 
 
-class ProviderNotFoundError(BrowserRegistryError):
+class ProviderResourceNotFoundError(BrowserRegistryError):
     """Raised when requesting a provider that has not been registered."""
 
     pass
@@ -102,13 +102,13 @@ class BrowserRegistry:
             BaseBrowserSession: Registered session manager instance.
 
         Raises:
-            ProviderNotFoundError: If the provider has not been registered.
+            ProviderResourceNotFoundError: If the provider has not been registered.
         """
         async with self._lock:
             key = provider.lower()
             manager = self._session_managers.get(key)
             if not manager:
-                raise ProviderNotFoundError(
+                raise ProviderResourceNotFoundError(
                     f"Session manager for provider '{provider}' not found in registry."
                 )
             return manager
@@ -123,13 +123,13 @@ class BrowserRegistry:
             BaseBrowserExecutor: Registered executor instance.
 
         Raises:
-            ProviderNotFoundError: If the provider has not been registered.
+            ProviderResourceNotFoundError: If the provider has not been registered.
         """
         async with self._lock:
             key = provider.lower()
             executor = self._executors.get(key)
             if not executor:
-                raise ProviderNotFoundError(
+                raise ProviderResourceNotFoundError(
                     f"Executor for provider '{provider}' not found in registry."
                 )
             return executor

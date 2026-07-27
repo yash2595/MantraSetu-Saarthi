@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import AsyncIterator
-from uuid import UUID, uuid4
 
 from app.ai.base import AIInitializationError, BaseAIProvider
 from app.ai.models import (
@@ -28,7 +27,7 @@ class MockAIProvider(BaseAIProvider):
     """
 
     def __init__(self, name: str = "mock") -> None:
-        """Initialize MockAIProvider.
+        """Initialize MockAIProvider with injected parameters.
 
         Args:
             name: Optional provider identifier name string.
@@ -48,11 +47,11 @@ class MockAIProvider(BaseAIProvider):
             )
 
     async def initialize(self) -> None:
-        """Initialize mock provider state."""
+        """Initialize mock provider state. Idempotent."""
         self._initialized = True
 
     async def close(self) -> None:
-        """Close mock provider state."""
+        """Close mock provider state. Idempotent."""
         self._initialized = False
 
     async def generate(self, request: AIRequest) -> AIResponse:
@@ -97,7 +96,7 @@ class MockAIProvider(BaseAIProvider):
         self._require_initialized()
 
         tokens = ["Mock ", "streaming ", "response ", "completed."]
-        for i, token in enumerate(tokens):
+        for token in tokens:
             await asyncio.sleep(0.01)
             yield token
 

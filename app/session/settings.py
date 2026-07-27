@@ -1,29 +1,42 @@
-"""Environment-driven settings for Session Management."""
+"""Configuration settings model for the Session subsystem in MantraSetu AgentOS.
 
-from functools import lru_cache
+This module defines SessionSettings using Pydantic v2 BaseSettings to parse environment
+variables for session timeouts, user session limits, and session tracking flags.
+"""
+
+from __future__ import annotations
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class SessionSettings(BaseSettings):
-    """Typed Session configuration loaded from environment variables."""
+    """Immutable configuration settings model for the Session subsystem.
 
-    ttl_seconds: int = Field(default=3600, gt=0, description="Session TTL in seconds.")
-    max_history_length: int = Field(default=50, gt=0, description="Max messages per session.")
+    Attributes:
+        session_timeout_minutes: Session inactivity timeout duration in minutes (default: 60).
+        max_sessions_per_user: Maximum concurrent active sessions allowed per user (default: 10).
+        enable_session_tracking: Boolean flag enabling session activity tracking (default: True).
+    """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         env_prefix="SESSION_",
+        env_file=".env",
         extra="ignore",
+        frozen=True,
     )
 
-
-@lru_cache(maxsize=1)
-def get_session_settings() -> SessionSettings:
-    """Return cached SessionSettings instance."""
-    return SessionSettings()
-
-
-session_settings = get_session_settings()
+    session_timeout_minutes: int = Field(
+        default=60,
+        ge=1,
+        description="Session inactivity timeout duration in minutes.",
+    )
+    max_sessions_per_user: int = Field(
+        default=10,
+        ge=1,
+        description="Maximum concurrent active sessions allowed per user.",
+    )
+    enable_session_tracking: bool = Field(
+        default=True,
+        description="Boolean flag enabling session activity tracking.",
+    )

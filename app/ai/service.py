@@ -1,8 +1,8 @@
 """AI Subsystem Service Facade for MantraSetu AgentOS.
 
-This module provides AIService as the primary public entry point for the AI subsystem,
-coordinating provider access, completion generation, streaming, and health checks via AIFactory
-and AIProviderRegistry without performing HTTP requests or parsing provider payloads directly.
+This module provides AIService as the main application facade layer for AI requests,
+coordinating provider resolution via registry/factory, request validation, response generation,
+and streaming without hardcoding provider SDKs or creating internal dependencies.
 """
 
 from __future__ import annotations
@@ -10,7 +10,10 @@ from __future__ import annotations
 from typing import AsyncIterator
 
 from app.ai.base import (
+    AIError,
     AIInitializationError,
+    AIProviderError,
+    AIRequestError,
     BaseAIProvider,
 )
 from app.ai.factory import AIFactory
@@ -22,29 +25,28 @@ from app.ai.registry import AIProviderRegistry
 
 
 class AIService:
-    """Public facade service coordinating AI inference provider backends.
+    """Application facade service coordinating AI inference requests.
 
     Responsibility:
-        Exposes a clean subsystem facade API for AI inference. Delegates provider creation,
-        resolution, and shutdown to AIFactory, delegates inference and streaming execution
-        to resolved BaseAIProvider instances, and delegates diagnostic probes to AIProviderRegistry.
+        Coordinates provider resolution via AIProviderRegistry and AIFactory, request validation,
+        inference generation, streaming responses, and diagnostic health checks.
     """
 
     def __init__(
         self,
+        registry: AIProviderRegistry,
         factory: AIFactory,
-        registry: AIProviderRegistry | None = None,
         default_provider: str = "mock",
     ) -> None:
-        """Initialize AIService with injected factory and registry dependencies.
+        """Initialize AIService with strictly injected dependencies.
 
         Args:
-            factory: AIFactory instance for provider instantiation and lifecycle management.
-            registry: Optional AIProviderRegistry instance for registry queries and health probes.
-            default_provider: Default provider string key used when request provider is omitted.
+            registry: AIProviderRegistry instance storing active providers.
+            factory: AIFactory instance for provider creation and resolution.
+            default_provider: Default provider string identifier used as fallback.
         """
-        self._factory = factory
         self._registry = registry
+        self._factory = factory
         self._default_provider = default_provider
         self._initialized = False
 
@@ -60,98 +62,143 @@ class AIService:
             )
 
     async def initialize(self) -> None:
-        """Initialize the AI service and ensure the default provider is available."""
+        """Initialize the AI service facade."""
         if self._initialized:
             return
 
-        # Pre-initialize default provider instance
-        await self._factory.get_or_create(self._default_provider)
         self._initialized = True
 
     async def close(self) -> None:
-        """Close all active providers and release allocated subsystem resources."""
-        await self._factory.shutdown()
+        """Close AI service facade resources."""
         self._initialized = False
 
-    async def get_provider(
-        self,
-        provider_type: str,
-    ) -> BaseAIProvider:
-        """Resolve or instantiate a BaseAIProvider backend via AIFactory.
+    def _validate_request(self, request: AIRequest) -> None:
+        """Validate incoming AIRequest object.
 
         Args:
-            provider_type: Target provider string identifier.
-
-        Returns:
-            BaseAIProvider: Initialized provider instance.
+            request: AIRequest instance.
 
         Raises:
-            AIInitializationError: If service is uninitialized.
+            AIRequestError: If request or message content is invalid.
         """
-        self._require_initialized()
-        return await self._factory.get_or_create(provider_type)
+        if not isinstance(request, AIRequest):
+            raise AIRequestError("Invalid AIRequest payload model provided.")
+        if not request.message or not request.message.content.strip():
+            raise AIRequestError("AIRequest message content cannot be empty.")
 
-    async def available_providers(self) -> tuple[str, ...]:
-        """List all currently registered active AI providers.
+    async def resolve_provider(self, request: AIRequest) -> BaseAIProvider:
+        """Resolve a BaseAIProvider instance using request context or default provider.
+
+        Args:
+            request: Incoming AIRequest model.
 
         Returns:
-            tuple[str, ...]: Immutable tuple of provider identifier keys.
+            BaseAIProvider: Resolved provider instance.
 
         Raises:
-            AIInitializationError: If service is uninitialized.
+            AIProviderError: If requested provider cannot be resolved or created.
         """
-        self._require_initialized()
-        if self._registry:
-            return await self._registry.list_providers()
-        return (self._default_provider,)
+        raw_provider = request.context.get("provider")
+        provider_name = (
+            str(raw_provider).strip().lower()
+            if raw_provider and isinstance(raw_provider, str)
+            else self._default_provider
+        )
+
+        if await self._registry.contains(provider_name):
+            return await self._registry.get(provider_name)
+
+        try:
+            return await self._factory.get_or_create(provider_name)
+        except Exception as e:
+            raise AIProviderError(
+                f"Failed to resolve AI provider '{provider_name}': {str(e)}"
+            ) from e
 
     async def generate(self, request: AIRequest) -> AIResponse:
-        """Delegate text/chat completion generation to the requested or default provider backend.
+        """Execute text/chat completion generation for an AIRequest.
 
         Args:
-            request: Provider-independent AIRequest payload model.
+            request: Provider-independent AIRequest model.
 
         Returns:
             AIResponse: Domain AIResponse output model.
 
         Raises:
             AIInitializationError: If service is uninitialized.
+            AIRequestError: If request payload is invalid.
             AIProviderError: If execution fails at the provider layer.
         """
         self._require_initialized()
-        provider = await self._factory.get_or_create(self._default_provider)
-        return await provider.generate(request)
+        self._validate_request(request)
+
+        provider = await self.resolve_provider(request)
+
+        try:
+            return await provider.generate(request)
+        except AIError:
+            raise
+        except Exception as e:
+            raise AIProviderError(
+                f"AI generation failed for request {request.request_id}: {str(e)}"
+            ) from e
 
     async def stream(self, request: AIRequest) -> AsyncIterator[str | dict[str, object]]:
-        """Delegate streaming text/chat completion generation to the requested or default provider backend.
+        """Execute streaming text/chat completion generation for an AIRequest.
 
         Args:
-            request: Provider-independent AIRequest payload model.
+            request: Provider-independent AIRequest model.
 
         Yields:
-            str | dict[str, object]: Incremental token or delta data.
+            str | dict[str, object]: Incremental token or delta chunk data.
 
         Raises:
             AIInitializationError: If service is uninitialized.
+            AIRequestError: If request payload is invalid.
             AIProviderError: If streaming fails at the provider layer.
         """
         self._require_initialized()
-        provider = await self._factory.get_or_create(self._default_provider)
-        async for chunk in provider.stream(request):
-            yield chunk
+        self._validate_request(request)
+
+        provider = await self.resolve_provider(request)
+
+        try:
+            async for chunk in provider.stream(request):
+                yield chunk
+        except AIError:
+            raise
+        except Exception as e:
+            raise AIProviderError(
+                f"AI streaming failed for request {request.request_id}: {str(e)}"
+            ) from e
 
     async def health_check(self) -> dict[str, object]:
-        """Delegate operational health check probes to AIProviderRegistry or default provider.
+        """Perform operational health check probe across registered providers.
 
         Returns:
-            dict[str, object]: Dictionary mapping provider names to diagnostic results.
+            dict[str, object]: Diagnostic health status dictionary mapping provider names.
 
         Raises:
             AIInitializationError: If service is uninitialized.
         """
         self._require_initialized()
-        if self._registry:
-            return await self._registry.health_check()
+        provider_names = await self._registry.list_providers()
+        provider_health: dict[str, object] = {}
 
-        provider = await self._factory.get_or_create(self._default_provider)
-        return {self._default_provider: await provider.health_check()}
+        for name in provider_names:
+            try:
+                provider = await self._registry.get(name)
+                provider_health[name] = await provider.health_check()
+            except Exception as e:
+                provider_health[name] = {
+                    "healthy": False,
+                    "provider": name,
+                    "message": f"Health check failed: {str(e)}",
+                }
+
+        return {
+            "status": "healthy",
+            "initialized": self._initialized,
+            "default_provider": self._default_provider,
+            "providers": provider_health,
+        }

@@ -9,7 +9,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.core.exceptions import BadRequestError
 from app.services.base import BaseService
 from app.services.navigation_service import NavigationDecision
 from app.workflows.registry import WORKFLOWS
@@ -133,10 +132,10 @@ class ActionEngine(BaseService):
             ExecutionPlan: Generated step-by-step execution plan.
 
         Raises:
-            BadRequestError: If decision is None.
+            ValueError: If decision is None.
         """
         if decision is None:
-            raise BadRequestError("NavigationDecision cannot be None.")
+            raise ValueError("NavigationDecision cannot be None.")
 
         intent = decision.intent.strip().upper()
         target_page = decision.target_page

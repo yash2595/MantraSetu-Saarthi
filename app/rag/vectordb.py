@@ -1,244 +1,171 @@
-"""Concrete VectorDatabase module for MantraSetu AgentOS.
+"""Vector Store Service orchestration layer for MantraSetu AgentOS.
 
-This module implements VectorDatabase for vector storage, deletion, and similarity search
-by delegating indexing and query operations to an injected BaseVectorDatabaseClient implementation.
+This module implements VectorStoreService, coordinating document chunk indexing,
+semantic similarity search, and vector document deletion through an injected BaseVectorStore.
 """
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
-from app.rag.base import BaseVectorDatabase, VectorDatabaseError
-from app.rag.contracts import BaseVectorDatabaseClient
-from app.rag.models import DocumentChunk, EmbeddingVector, RetrievedChunk
+from app.core.models import ComponentHealth, SystemHealthStatus
+from app.rag.contracts import (
+    BaseVectorStore,
+    RAGInitializationError,
+    VectorDatabaseError,
+)
+from app.rag.models import (
+    DocumentChunk,
+    RetrievalRequest,
+    RetrievalResult,
+)
 
 
-class VectorDatabase(BaseVectorDatabase):
-    """Concrete vector database manager implementing BaseVectorDatabase contract.
+class VectorStoreService:
+    """Service facade coordinating vector database storage and search operations.
 
     Responsibility:
-        Validates document chunk and vector parameters, delegates index storage, deletion,
-        and similarity search to an injected BaseVectorDatabaseClient, validates raw search results,
-        translates result dictionaries into immutable RetrievedChunk models, and translates exceptions.
+        Validates chunk indexing, semantic search queries, and document vector deletion requests
+        by delegating strictly to an injected BaseVectorStore backend without coupling to vendor SDKs.
     """
 
-    def __init__(self, client: BaseVectorDatabaseClient) -> None:
-        """Initialize VectorDatabase with an injected vector database client.
+    def __init__(self, vector_store: BaseVectorStore) -> None:
+        """Initialize VectorStoreService with an injected BaseVectorStore dependency.
 
         Args:
-            client: Injected BaseVectorDatabaseClient instance.
+            vector_store: Injected BaseVectorStore implementation.
         """
-        self._client = client
+        self._vector_store = vector_store
+        self._initialized = False
 
-    async def upsert(self, chunks: tuple[DocumentChunk, ...]) -> None:
-        """Insert or update embedded DocumentChunk models in the vector index.
-
-        Args:
-            chunks: Immutable tuple of DocumentChunk instances.
+    def _require_initialized(self) -> None:
+        """Verify that the vector store service has been initialized.
 
         Raises:
-            VectorDatabaseError: If chunks tuple is invalid or client upsert fails.
+            RAGInitializationError: If initialize() has not been called.
         """
-        self._validate_chunks(chunks)
+        if not self._initialized:
+            raise RAGInitializationError(
+                "VectorStoreService is not initialized. Call initialize() first."
+            )
 
-        try:
-            await self._client.upsert_chunks(list(chunks))
-        except VectorDatabaseError:
-            raise
-        except Exception as exc:
-            raise VectorDatabaseError("Vector database failed to upsert document chunks.") from exc
+    async def initialize(self) -> None:
+        """Initialize vector store service and underlying storage backend. Idempotent."""
+        if self._initialized:
+            return
 
-    async def delete(self, chunk_ids: tuple[UUID, ...]) -> None:
-        """Remove document chunks from the vector index by UUID identifiers.
+        if hasattr(self._vector_store, "initialize"):
+            await self._vector_store.initialize()
+
+        self._initialized = True
+
+    async def close(self) -> None:
+        """Close vector store service and release backend resources."""
+        if hasattr(self._vector_store, "close"):
+            await self._vector_store.close()
+
+        self._initialized = False
+
+    async def add_chunks(
+        self,
+        chunks: tuple[DocumentChunk, ...],
+    ) -> None:
+        """Validate and index an immutable tuple of DocumentChunk models.
 
         Args:
-            chunk_ids: Immutable tuple of chunk UUIDs.
+            chunks: Immutable tuple of DocumentChunk models to index.
 
         Raises:
-            VectorDatabaseError: If chunk_ids tuple is invalid or client deletion fails.
+            RAGInitializationError: If service is uninitialized.
+            VectorDatabaseError: If chunks tuple is empty or indexing fails.
         """
-        self._validate_chunk_ids(chunk_ids)
+        self._require_initialized()
+        if not chunks:
+            raise VectorDatabaseError("Cannot index an empty tuple of DocumentChunk models.")
 
         try:
-            await self._client.delete_chunks(list(chunk_ids))
+            await self._vector_store.add_chunks(chunks)
         except VectorDatabaseError:
             raise
-        except Exception as exc:
-            raise VectorDatabaseError("Vector database failed to delete document chunks.") from exc
+        except Exception as e:
+            raise VectorDatabaseError(f"Failed to add document chunks: {str(e)}") from e
 
     async def search(
         self,
-        query_vector: EmbeddingVector,
-        top_k: int = 5,
-        filters: dict[str, Any] | None = None,
-    ) -> tuple[RetrievedChunk, ...]:
-        """Execute vector similarity search and return immutable RetrievedChunk models.
+        request: RetrievalRequest,
+    ) -> tuple[RetrievalResult, ...]:
+        """Validate query and execute similarity search via vector store backend.
 
         Args:
-            query_vector: Query EmbeddingVector model.
-            top_k: Maximum number of nearest neighbors to retrieve.
-            filters: Optional metadata filtering dictionary.
+            request: RetrievalRequest model containing query text and top_k limit.
 
         Returns:
-            tuple[RetrievedChunk, ...]: Immutable tuple of RetrievedChunk models.
+            tuple[RetrievalResult, ...]: Immutable tuple of matching RetrievalResult models.
 
         Raises:
-            VectorDatabaseError: If query parameters are invalid or search fails.
+            RAGInitializationError: If service is uninitialized.
+            VectorDatabaseError: If query is invalid or search execution fails.
         """
-        self._validate_search(query_vector, top_k)
+        self._require_initialized()
+        if not isinstance(request, RetrievalRequest):
+            raise VectorDatabaseError("Invalid RetrievalRequest payload model provided.")
+        if not request.query or not request.query.strip():
+            raise VectorDatabaseError("RetrievalRequest query string cannot be empty or blank.")
 
         try:
-            raw_results = await self._client.search_vector(
-                vector=list(query_vector.values),
-                top_k=top_k,
-                filters=filters,
-            )
+            return await self._vector_store.similarity_search(request)
         except VectorDatabaseError:
             raise
-        except Exception as exc:
-            raise VectorDatabaseError("Vector database similarity search failed.") from exc
+        except Exception as e:
+            raise VectorDatabaseError(f"Vector similarity search failed: {str(e)}") from e
 
-        self._validate_results(raw_results)
-        return self._parse_results(raw_results)
-
-    async def clear(self) -> None:
-        """Purge all stored vectors and indices from the database.
-
-        Raises:
-            VectorDatabaseError: If database clear fails.
-        """
-        try:
-            await self._client.clear_index()
-        except Exception as exc:
-            raise VectorDatabaseError("Vector database failed to clear index.") from exc
-
-    async def health_check(self) -> bool:
-        """Check operational status of the remote vector database backend.
-
-        Returns:
-            bool: True if operational, False otherwise.
-        """
-        try:
-            return await self._client.health_check()
-        except Exception:
-            return False
-
-    # ------------------------------------------------------------------
-    # Private Helper Methods
-    # ------------------------------------------------------------------
-
-    def _validate_chunks(self, chunks: tuple[DocumentChunk, ...]) -> None:
-        """Validate input document chunks collection.
-
-        Args:
-            chunks: Immutable tuple of DocumentChunk instances.
-
-        Raises:
-            VectorDatabaseError: If chunks is None, empty, or contains invalid items.
-        """
-        if not chunks or not isinstance(chunks, (tuple, list)):
-            raise VectorDatabaseError("Document chunks collection cannot be empty or None.")
-
-        for i, chunk in enumerate(chunks):
-            if not isinstance(chunk, DocumentChunk):
-                raise VectorDatabaseError(
-                    f"Invalid chunk at index {i}: must be a DocumentChunk instance."
-                )
-            if not chunk.chunk_id:
-                raise VectorDatabaseError(f"DocumentChunk at index {i} missing chunk_id.")
-            if not chunk.embedding or not chunk.embedding.values:
-                raise VectorDatabaseError(
-                    f"DocumentChunk at index {i} missing valid embedding vector."
-                )
-
-    def _validate_chunk_ids(self, chunk_ids: tuple[UUID, ...]) -> None:
-        """Validate input chunk UUIDs collection.
-
-        Args:
-            chunk_ids: Tuple of chunk UUIDs.
-
-        Raises:
-            VectorDatabaseError: If chunk_ids is None, empty, or contains non-UUID items.
-        """
-        if not chunk_ids or not isinstance(chunk_ids, (tuple, list)):
-            raise VectorDatabaseError("Chunk IDs collection cannot be empty or None.")
-
-        for i, cid in enumerate(chunk_ids):
-            if not isinstance(cid, UUID):
-                raise VectorDatabaseError(
-                    f"Invalid chunk_id at index {i}: must be a UUID instance."
-                )
-
-    def _validate_search(
+    async def delete_document(
         self,
-        query_vector: EmbeddingVector,
-        top_k: int,
+        document_id: UUID,
     ) -> None:
-        """Validate vector search query parameters.
+        """Delete all vector chunk records associated with a document_id.
 
         Args:
-            query_vector: Query EmbeddingVector model.
-            top_k: Top K results limit.
+            document_id: Unique document identifier UUID to purge.
 
         Raises:
-            VectorDatabaseError: If vector is invalid or top_k <= 0.
+            RAGInitializationError: If service is uninitialized.
+            VectorDatabaseError: If document_id is invalid or deletion fails.
         """
-        if not query_vector or not isinstance(query_vector, EmbeddingVector):
-            raise VectorDatabaseError("query_vector must be a valid EmbeddingVector instance.")
+        self._require_initialized()
+        if not isinstance(document_id, UUID):
+            raise VectorDatabaseError("Invalid document_id UUID provided.")
 
-        if not query_vector.values:
-            raise VectorDatabaseError("query_vector contains no vector values.")
+        try:
+            await self._vector_store.delete_document(document_id)
+        except VectorDatabaseError:
+            raise
+        except Exception as e:
+            raise VectorDatabaseError(f"Failed to delete document vectors for '{document_id}': {str(e)}") from e
 
-        if top_k <= 0:
-            raise VectorDatabaseError("top_k parameter must be greater than zero.")
-
-    def _validate_results(self, raw_results: Any) -> None:
-        """Validate raw search results returned by client.
-
-        Args:
-            raw_results: Client search response payload.
-
-        Raises:
-            VectorDatabaseError: If raw_results is not a list or tuple of valid dictionaries.
-        """
-        if raw_results is None or not isinstance(raw_results, (list, tuple)):
-            raise VectorDatabaseError("Vector database client returned invalid search results payload.")
-
-        for i, item in enumerate(raw_results):
-            if not isinstance(item, dict):
-                raise VectorDatabaseError(
-                    f"Invalid search result item at index {i}: expected dictionary."
-                )
-            if "chunk" not in item or not isinstance(item["chunk"], DocumentChunk):
-                raise VectorDatabaseError(
-                    f"Search result item at index {i} missing valid 'chunk' DocumentChunk."
-                )
-
-    def _parse_results(
-        self,
-        raw_results: list[dict[str, Any]],
-    ) -> tuple[RetrievedChunk, ...]:
-        """Convert validated result dictionaries into immutable RetrievedChunk models.
-
-        Args:
-            raw_results: List of result dictionaries.
+    async def health_check(self) -> ComponentHealth:
+        """Check operational health of the vector store service and underlying backend.
 
         Returns:
-            tuple[RetrievedChunk, ...]: Tuple of domain RetrievedChunk models.
+            ComponentHealth: Operational component health status model.
         """
-        parsed: list[RetrievedChunk] = []
-        for item in raw_results:
-            chunk: DocumentChunk = item["chunk"]
-            score: float = float(item.get("score", 0.0))
-            explanation: str | None = item.get("relevance_explanation")
-
-            parsed.append(
-                RetrievedChunk(
-                    chunk=chunk,
-                    score=score,
-                    relevance_explanation=explanation,
-                )
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="vector_store_service",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="VectorStoreService uninitialized.",
             )
 
-        return tuple(parsed)
+        store_health = await self._vector_store.health_check()
+        is_healthy = (
+            isinstance(store_health, ComponentHealth)
+            and store_health.status == SystemHealthStatus.HEALTHY
+        )
+
+        return ComponentHealth(
+            component_name="vector_store_service",
+            status=SystemHealthStatus.HEALTHY if is_healthy else SystemHealthStatus.UNHEALTHY,
+            message="VectorStoreService operational."
+            if is_healthy
+            else "VectorStoreService backend degraded.",
+        )

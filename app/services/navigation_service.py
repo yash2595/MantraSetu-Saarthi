@@ -9,7 +9,6 @@ from typing import Mapping
 
 from pydantic import BaseModel, Field
 
-from app.core.exceptions import BadRequestError
 from app.services.base import BaseService
 
 logger = logging.getLogger(__name__)
@@ -123,13 +122,13 @@ class NavigationService(BaseService):
             NavigationDecision: Planned decision model.
 
         Raises:
-            BadRequestError: If current_page or intent is empty or invalid.
+            ValueError: If current_page or intent is empty or invalid.
         """
         if not current_page or not isinstance(current_page, str) or not current_page.strip():
-            raise BadRequestError("current_page must be a non-empty string.")
+            raise ValueError("current_page must be a non-empty string.")
 
         if not intent or not isinstance(intent, str) or not intent.strip():
-            raise BadRequestError("intent must be a non-empty string.")
+            raise ValueError("intent must be a non-empty string.")
 
         normalized_current_page = current_page.strip()
         normalized_intent = intent.strip().upper()

@@ -1,105 +1,150 @@
-"""Session Management Pydantic Models.
+"""Domain models for application session management in MantraSetu AgentOS.
 
-Defines schemas for conversation messages, session state, context, and TTL tracking.
+This module defines immutable Pydantic v2 domain models for tracking user sessions,
+session contexts, activity events, and session operational statuses.
 """
 
-from datetime import datetime, timezone
-from typing import Any
-from uuid import uuid4
+from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Mapping
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _utc_now() -> datetime:
-    """Helper to return current UTC timestamp."""
+    """Return the current timestamp in UTC.
+
+    Returns:
+        datetime: Current timezone-aware datetime instance in UTC.
+    """
     return datetime.now(timezone.utc)
 
 
-class SessionMessage(BaseModel):
-    """Individual conversation message stored in session history.
+class BaseSessionModel(BaseModel):
+    """Base Pydantic v2 model for immutable session domain entities."""
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        populate_by_name=True,
+    )
+
+
+class SessionStatus(str, Enum):
+    """Enumeration of user session operational statuses."""
+
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    CLOSED = "closed"
+
+
+class UserSession(BaseSessionModel):
+    """Domain model representing an active application user session.
 
     Attributes:
-        message_id: Unique message identifier string.
-        role: Message role string (e.g. 'user', 'assistant', 'system').
-        content: Textual content of the message.
-        timestamp: Message creation UTC timestamp.
-        metadata: Additional metadata dictionary.
+        session_id: Unique session identifier UUID.
+        user_id: Optional associated user identifier UUID.
+        status: Current SessionStatus enum value.
+        metadata: Immutable key-value metadata mapping.
+        created_at: UTC session creation timestamp.
+        updated_at: UTC session last update timestamp.
+        expires_at: Optional UTC session expiration timestamp.
     """
 
-    message_id: str = Field(
-        default_factory=lambda: str(uuid4()),
-        description="Unique message identifier string.",
+    session_id: UUID = Field(
+        default_factory=uuid4,
+        description="Unique session identifier UUID.",
     )
-    role: str = Field(
-        ...,
-        description="Message role (e.g. 'user', 'assistant', 'system').",
-    )
-    content: str = Field(
-        ...,
-        description="Text content of the message.",
-    )
-    timestamp: datetime = Field(
-        default_factory=_utc_now,
-        description="Message creation UTC timestamp.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional key-value metadata dictionary.",
-    )
-
-
-class SessionData(BaseModel):
-    """Session state model storing conversation history, context, and TTL timestamps.
-
-    Attributes:
-        session_id: Unique session identifier string.
-        user_id: Optional user identifier string.
-        created_at: Creation UTC timestamp.
-        updated_at: Last update UTC timestamp.
-        expires_at: Optional expiration UTC timestamp.
-        context: Custom key-value context dictionary.
-        history: Sequence of conversation messages.
-    """
-
-    session_id: str = Field(
-        ...,
-        description="Unique session identifier string.",
-    )
-    user_id: str | None = Field(
+    user_id: UUID | None = Field(
         default=None,
-        description="Optional user identifier string.",
+        description="Optional associated user identifier UUID.",
+    )
+    status: SessionStatus = Field(
+        default=SessionStatus.ACTIVE,
+        description="Current SessionStatus enum value.",
+    )
+    metadata: Mapping[str, object] = Field(
+        default_factory=dict,
+        description="Immutable key-value metadata mapping.",
     )
     created_at: datetime = Field(
         default_factory=_utc_now,
-        description="Creation UTC timestamp.",
+        description="UTC session creation timestamp.",
     )
     updated_at: datetime = Field(
         default_factory=_utc_now,
-        description="Last update UTC timestamp.",
+        description="UTC session last update timestamp.",
     )
     expires_at: datetime | None = Field(
         default=None,
-        description="Optional expiration UTC timestamp.",
+        description="Optional UTC session expiration timestamp.",
     )
-    context: dict[str, Any] = Field(
+
+
+class SessionContext(BaseSessionModel):
+    """Domain model capturing active state and route context for a session.
+
+    Attributes:
+        session_id: Associated unique session identifier UUID.
+        conversation_id: Optional associated conversation UUID.
+        active_route: Optional current UI navigation route string.
+        state: Immutable application state mapping.
+        metadata: Immutable key-value metadata mapping.
+    """
+
+    session_id: UUID = Field(
+        default_factory=uuid4,
+        description="Associated unique session identifier UUID.",
+    )
+    conversation_id: UUID | None = Field(
+        default=None,
+        description="Optional associated conversation UUID.",
+    )
+    active_route: str | None = Field(
+        default=None,
+        description="Optional current UI navigation route string.",
+    )
+    state: Mapping[str, object] = Field(
         default_factory=dict,
-        description="Custom key-value context dictionary.",
+        description="Immutable application state mapping.",
     )
-    history: list[SessionMessage] = Field(
-        default_factory=list,
-        description="Sequence of conversation messages.",
+    metadata: Mapping[str, object] = Field(
+        default_factory=dict,
+        description="Immutable key-value metadata mapping.",
     )
 
-    def is_expired(self, now: datetime | None = None) -> bool:
-        """Check if session is expired relative to current time.
 
-        Args:
-            now: Optional current timestamp override.
+class SessionActivity(BaseSessionModel):
+    """Domain model representing a discrete user or system action during a session.
 
-        Returns:
-            bool: True if session is expired, False otherwise.
-        """
-        if self.expires_at is None:
-            return False
-        current_time = now or _utc_now()
-        return current_time >= self.expires_at
+    Attributes:
+        activity_id: Unique activity identifier UUID.
+        session_id: Associated session identifier UUID.
+        action: Action name or event identifier string.
+        metadata: Immutable activity metadata mapping.
+        created_at: UTC activity creation timestamp.
+    """
+
+    activity_id: UUID = Field(
+        default_factory=uuid4,
+        description="Unique activity identifier UUID.",
+    )
+    session_id: UUID = Field(
+        ...,
+        description="Associated session identifier UUID.",
+    )
+    action: str = Field(
+        ...,
+        description="Action name or event identifier string.",
+    )
+    metadata: Mapping[str, object] = Field(
+        default_factory=dict,
+        description="Immutable activity metadata mapping.",
+    )
+    created_at: datetime = Field(
+        default_factory=_utc_now,
+        description="UTC activity creation timestamp.",
+    )

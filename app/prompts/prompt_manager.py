@@ -12,7 +12,7 @@ from app.prompts.system_prompt import PROMPT_REGISTRY
 logger = logging.getLogger(__name__)
 
 
-class PromptNotFoundError(KeyError):
+class PromptResourceNotFoundError(KeyError):
     """Raised when a requested prompt or version does not exist."""
 
 
@@ -55,13 +55,13 @@ class PromptManager(BasePromptManager):
         try:
             return self._registry[name][version]
         except KeyError as exc:
-            raise PromptNotFoundError(f"Prompt not found: {name} version {version}") from exc
+            raise PromptResourceNotFoundError(f"Prompt not found: {name} version {version}") from exc
 
     def _get_latest_version(self, name: str) -> str:
         try:
             versions = self._registry[name]
         except KeyError as exc:
-            raise PromptNotFoundError(f"Prompt not found: {name}") from exc
+            raise PromptResourceNotFoundError(f"Prompt not found: {name}") from exc
         return sorted(versions.keys())[-1]
 
     def _render(self, template: str, **variables: Any) -> str:

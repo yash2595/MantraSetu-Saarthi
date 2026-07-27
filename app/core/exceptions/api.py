@@ -110,7 +110,7 @@ class ValidationException(AppException):
         )
 
 
-class InternalServerException(AppException):
+class InternalServerError(AppException):
     """Raised when an internal server processing error occurs."""
 
     def __init__(
@@ -128,9 +128,9 @@ class InternalServerException(AppException):
 
 
 # Naming aliases for backwards and framework compatibility
-BadRequestError = BadRequestException
-UnauthorizedError = UnauthorizedException
-ForbiddenError = ForbiddenException
-NotFoundError = NotFoundException
+ValidationError = BadRequestException
+AuthenticationError = UnauthorizedException
+AuthorizationError = ForbiddenException
+ResourceNotFoundError = NotFoundException
 ConflictError = ConflictException
 ValidationError = ValidationException

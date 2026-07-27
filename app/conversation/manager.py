@@ -1,7 +1,7 @@
 """Conversation Manager coordinator for MantraSetu AgentOS.
 
 This module implements ConversationManager for coordinating conversation session lifecycle operations
-and memory turn storage through public abstract contracts without accessing private component attributes.
+and memory operations through dependency-injected session and memory managers.
 """
 
 from __future__ import annotations
@@ -9,45 +9,42 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.conversation.base import (
-    BaseConversationManager,
-    BaseConversationMemory,
-    BaseConversationSession,
-    ConversationClosedError,
+    ConversationError,
     ConversationInitializationError,
-    ConversationNotFoundError,
+    ConversationResourceNotFoundError,
     ConversationValidationError,
 )
+from app.conversation.memory import BaseConversationMemory
 from app.conversation.models import (
     ConversationContext,
     ConversationMessage,
     ConversationSession,
-    ConversationStatus,
-    ConversationTurn,
 )
+from app.conversation.session import BaseSessionManager
+from app.core.models import ComponentHealth, SystemHealthStatus
 
 
-class ConversationManager(BaseConversationManager):
-    """Coordinator service implementing BaseConversationManager.
+class ConversationManager:
+    """Coordinator facade service delegating session and memory operations.
 
     Responsibility:
-        Coordinates session verification, message handling, turn creation, context updates,
-        and turn persistence by delegating strictly through public BaseConversationSession and
-        BaseConversationMemory contracts without accessing internal private data structures.
+        Coordinates session creation, retrieval, context management, message persistence,
+        and memory clearing through injected BaseSessionManager and BaseConversationMemory contracts.
     """
 
     def __init__(
         self,
-        session_manager: BaseConversationSession,
-        memory: BaseConversationMemory,
+        session_manager: BaseSessionManager,
+        memory_manager: BaseConversationMemory,
     ) -> None:
-        """Initialize ConversationManager with session manager and memory dependencies.
+        """Initialize ConversationManager with injected session and memory managers.
 
         Args:
-            session_manager: BaseConversationSession instance.
-            memory: BaseConversationMemory instance.
+            session_manager: Injected BaseSessionManager instance.
+            memory_manager: Injected BaseConversationMemory instance.
         """
         self._session_manager = session_manager
-        self._memory = memory
+        self._memory_manager = memory_manager
         self._initialized = False
 
     def _require_initialized(self) -> None:
@@ -62,155 +59,221 @@ class ConversationManager(BaseConversationManager):
             )
 
     async def initialize(self) -> None:
-        """Initialize underlying session manager and memory components."""
-        await self._session_manager.initialize()
-        await self._memory.initialize()
+        """Initialize underlying session manager and memory components. Idempotent."""
+        if self._initialized:
+            return
+
+        if hasattr(self._session_manager, "initialize"):
+            await self._session_manager.initialize()
+        if hasattr(self._memory_manager, "initialize"):
+            await self._memory_manager.initialize()
+
         self._initialized = True
 
     async def close(self) -> None:
         """Close underlying memory and session manager components."""
-        await self._memory.close()
-        await self._session_manager.close()
+        if hasattr(self._memory_manager, "close"):
+            await self._memory_manager.close()
+        if hasattr(self._session_manager, "close"):
+            await self._session_manager.close()
+
         self._initialized = False
 
-    async def health_check(self) -> bool:
-        """Check aggregated operational health across session manager and memory.
-
-        Returns:
-            bool: True if initialized and both session manager and memory report healthy, False otherwise.
-        """
-        if not self._initialized:
-            return False
-
-        session_healthy = await self._session_manager.health_check()
-        memory_healthy = await self._memory.health_check()
-        return session_healthy and memory_healthy
-
-    async def create_session(
+    async def create_conversation(
         self,
+        user_id: UUID | None = None,
+        conversation_id: UUID | None = None,
         context: ConversationContext | None = None,
     ) -> ConversationSession:
-        """Create a new conversation session by delegating to session manager.
+        """Create a new conversation session delegating to session_manager.
 
         Args:
+            user_id: Optional user identifier UUID.
+            conversation_id: Optional conversation identifier UUID.
             context: Optional ConversationContext configuration.
 
         Returns:
-            ConversationSession: Created session model.
+            ConversationSession: Created conversation session model.
         """
         self._require_initialized()
-        return await self._session_manager.create_session(context)
+        try:
+            return await self._session_manager.create_session(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                context=context,
+            )
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to create conversation: {str(e)}") from e
 
-    async def get_session(self, session_id: UUID) -> ConversationSession | None:
-        """Retrieve a conversation session by identifier.
+    async def get_conversation(
+        self,
+        session_id: UUID,
+    ) -> ConversationSession:
+        """Retrieve a conversation session by identifier delegating to session_manager.
 
         Args:
             session_id: Unique session identifier UUID.
 
         Returns:
-            ConversationSession | None: Session instance if found, None otherwise.
+            ConversationSession: Retrieved conversation session model.
         """
         self._require_initialized()
-        return await self._session_manager.get_session(session_id)
-
-    async def close_session(self, session_id: UUID) -> None:
-        """Close a conversation session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID to close.
-        """
-        self._require_initialized()
-        await self._session_manager.close_session(session_id)
+        try:
+            return await self._session_manager.get_session(session_id)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to get conversation '{session_id}': {str(e)}") from e
 
     async def add_message(
         self,
         session_id: UUID,
         message: ConversationMessage,
-    ) -> ConversationTurn:
-        """Add a message to an active session, construct a turn, and save to memory.
+    ) -> None:
+        """Store a ConversationMessage for a session delegating to memory_manager.
 
         Args:
-            session_id: Target session identifier UUID.
-            message: ConversationMessage command model.
-
-        Returns:
-            ConversationTurn: Constructed conversation turn model.
-
-        Raises:
-            ConversationInitializationError: If manager is uninitialized.
-            ConversationNotFoundError: If session does not exist.
-            ConversationClosedError: If session is archived or closed.
-            ConversationValidationError: If message is invalid.
+            session_id: Unique session identifier UUID.
+            message: ConversationMessage model instance.
         """
         self._require_initialized()
-        if not message:
-            raise ConversationValidationError("Message cannot be None.")
+        try:
+            await self._memory_manager.store_message(session_id=session_id, message=message)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to add message for session '{session_id}': {str(e)}") from e
 
-        session = await self._session_manager.get_session(session_id)
-        if not session:
-            raise ConversationNotFoundError(f"Conversation session {session_id} not found.")
+    async def get_messages(
+        self,
+        session_id: UUID,
+        limit: int | None = None,
+    ) -> tuple[ConversationMessage, ...]:
+        """Retrieve chronological messages for a session delegating to memory_manager.
 
-        if session.status != ConversationStatus.ACTIVE:
-            raise ConversationClosedError(
-                f"Conversation session {session_id} is in '{session.status}' status (must be ACTIVE)."
-            )
+        Args:
+            session_id: Unique session identifier UUID.
+            limit: Optional limit on recent messages count.
 
-        turn = ConversationTurn(user_message=message)
-        await self._memory.save_turn(session_id, turn)
-
-        return turn
+        Returns:
+            tuple[ConversationMessage, ...]: Immutable tuple of ConversationMessage objects.
+        """
+        self._require_initialized()
+        try:
+            return await self._memory_manager.get_messages(session_id=session_id, limit=limit)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to get messages for session '{session_id}': {str(e)}") from e
 
     async def update_context(
         self,
         session_id: UUID,
         context: ConversationContext,
     ) -> ConversationContext:
-        """Update context settings for an active conversation session using public contract.
+        """Update active context for a session delegating to memory_manager.
 
         Args:
-            session_id: Target session identifier UUID.
+            session_id: Unique session identifier UUID.
             context: ConversationContext instance.
 
         Returns:
-            ConversationContext: Updated context model.
-
-        Raises:
-            ConversationInitializationError: If manager is uninitialized.
-            ConversationNotFoundError: If session does not exist.
-            ConversationClosedError: If session is archived or closed.
-            ConversationValidationError: If context is invalid.
+            ConversationContext: Updated conversation context entity.
         """
         self._require_initialized()
-        if not context:
-            raise ConversationValidationError("Context cannot be None.")
+        try:
+            return await self._memory_manager.update_context(session_id=session_id, context=context)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to update context for session '{session_id}': {str(e)}") from e
 
-        session = await self._session_manager.get_session(session_id)
-        if not session:
-            raise ConversationNotFoundError(f"Conversation session {session_id} not found.")
-
-        if session.status != ConversationStatus.ACTIVE:
-            raise ConversationClosedError(
-                f"Conversation session {session_id} is in '{session.status}' status (must be ACTIVE)."
-            )
-
-        return await self._session_manager.update_context(session_id, context)
-
-    async def get_context(self, session_id: UUID) -> ConversationContext:
-        """Retrieve context settings for a conversation session.
+    async def get_context(
+        self,
+        session_id: UUID,
+    ) -> ConversationContext:
+        """Retrieve active context for a session delegating to memory_manager.
 
         Args:
             session_id: Unique session identifier UUID.
 
         Returns:
-            ConversationContext: Active session context model.
-
-        Raises:
-            ConversationInitializationError: If manager is uninitialized.
-            ConversationNotFoundError: If session does not exist.
+            ConversationContext: Active conversation context entity.
         """
         self._require_initialized()
-        session = await self._session_manager.get_session(session_id)
-        if not session:
-            raise ConversationNotFoundError(f"Conversation session {session_id} not found.")
+        try:
+            return await self._memory_manager.get_context(session_id=session_id)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to get context for session '{session_id}': {str(e)}") from e
 
-        return session.context
+    async def close_conversation(
+        self,
+        session_id: UUID,
+    ) -> ConversationSession:
+        """Close a conversation session delegating to session_manager.
+
+        Args:
+            session_id: Unique session identifier UUID to close.
+
+        Returns:
+            ConversationSession: Closed conversation session entity.
+        """
+        self._require_initialized()
+        try:
+            return await self._session_manager.close_session(session_id=session_id)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to close conversation '{session_id}': {str(e)}") from e
+
+    async def clear_memory(
+        self,
+        session_id: UUID,
+    ) -> None:
+        """Purge all recorded messages and context delegating to memory_manager.
+
+        Args:
+            session_id: Unique session identifier UUID to clear.
+        """
+        self._require_initialized()
+        try:
+            await self._memory_manager.clear_memory(session_id=session_id)
+        except ConversationError:
+            raise
+        except Exception as e:
+            raise ConversationError(f"Failed to clear memory for session '{session_id}': {str(e)}") from e
+
+    async def health_check(self) -> ComponentHealth:
+        """Check aggregated operational health across session manager and memory manager.
+
+        Returns:
+            ComponentHealth: Aggregated component health status model.
+        """
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="conversation_manager",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="ConversationManager uninitialized.",
+            )
+
+        sess_health = await self._session_manager.health_check()
+        mem_health = await self._memory_manager.health_check()
+
+        is_healthy = (
+            isinstance(sess_health, ComponentHealth)
+            and sess_health.status == SystemHealthStatus.HEALTHY
+            and isinstance(mem_health, ComponentHealth)
+            and mem_health.status == SystemHealthStatus.HEALTHY
+        )
+
+        return ComponentHealth(
+            component_name="conversation_manager",
+            status=SystemHealthStatus.HEALTHY if is_healthy else SystemHealthStatus.UNHEALTHY,
+            message="ConversationManager operational."
+            if is_healthy
+            else "ConversationManager component degraded.",
+        )

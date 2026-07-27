@@ -1,66 +1,53 @@
-"""RAG (Retrieval-Augmented Generation) domain subsystem for MantraSetu AgentOS."""
+"""RAG domain subsystem for MantraSetu AgentOS."""
 
-from app.rag.base import (
-    BaseChunker,
-    BaseDocumentIndexer,
+from app.rag.contracts import (
     BaseEmbeddingProvider,
-    BaseRAGService,
-    BaseReranker,
     BaseRetriever,
-    BaseVectorDatabase,
+    BaseVectorStore,
+    DocumentProcessingError,
     EmbeddingError,
-    HealthCheckError,
     RAGError,
-    RerankingError,
+    RAGInitializationError,
     RetrievalError,
     VectorDatabaseError,
 )
-from app.rag.contracts import BaseEmbeddingClient, BaseVectorDatabaseClient
-from app.rag.embeddings import EmbeddingProvider
+from app.rag.embeddings import EmbeddingService
 from app.rag.models import (
     BaseRAGModel,
-    ChunkSource,
+    Document,
     DocumentChunk,
-    EmbeddingVector,
-    KnowledgeDocument,
+    DocumentType,
+    EmbeddingRequest,
+    RAGContext,
+    RetrievalRequest,
+    RetrievalResult,
     RetrievalStatus,
-    RetrievedChunk,
-    SearchMetadata,
-    SearchQuery,
-    SearchResult,
 )
-from app.rag.retriever import Retriever
+from app.rag.retriever import RetrieverService
 from app.rag.service import RAGService
-from app.rag.vectordb import VectorDatabase
+from app.rag.vectordb import VectorStoreService
 
 __all__ = [
     "BaseRAGModel",
-    "ChunkSource",
+    "DocumentType",
     "RetrievalStatus",
-    "SearchMetadata",
-    "EmbeddingVector",
+    "Document",
     "DocumentChunk",
-    "KnowledgeDocument",
-    "SearchQuery",
-    "RetrievedChunk",
-    "SearchResult",
+    "EmbeddingRequest",
+    "RetrievalRequest",
+    "RetrievalResult",
+    "RAGContext",
     "BaseEmbeddingProvider",
-    "BaseVectorDatabase",
+    "BaseVectorStore",
     "BaseRetriever",
-    "BaseReranker",
-    "BaseChunker",
-    "BaseDocumentIndexer",
-    "BaseRAGService",
-    "BaseEmbeddingClient",
-    "BaseVectorDatabaseClient",
-    "EmbeddingProvider",
-    "VectorDatabase",
-    "Retriever",
+    "EmbeddingService",
+    "VectorStoreService",
+    "RetrieverService",
     "RAGService",
     "RAGError",
     "EmbeddingError",
     "VectorDatabaseError",
     "RetrievalError",
-    "RerankingError",
-    "HealthCheckError",
+    "DocumentProcessingError",
+    "RAGInitializationError",
 ]

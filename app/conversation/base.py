@@ -1,21 +1,20 @@
 """Abstract contracts and interfaces for the Conversation subsystem in MantraSetu AgentOS.
 
-This module defines abstract base classes for session management, conversation memory,
-manager coordination, and engine facade contracts alongside domain exception hierarchies.
+This module defines the foundational BaseConversationManager abstract interface
+and domain exception hierarchy for managing conversation sessions and messages.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Mapping
 from uuid import UUID
 
-from app.conversation.models import (
-    ConversationContext,
-    ConversationMessage,
-    ConversationSession,
-    ConversationTurn,
+from app.ai.models import (
+    Conversation,
+    Message,
 )
+from app.core.models import ComponentHealth
 
 
 class ConversationError(Exception):
@@ -24,8 +23,14 @@ class ConversationError(Exception):
     pass
 
 
-class ConversationNotFoundError(ConversationError):
+class ConversationResourceNotFoundError(ConversationError):
     """Raised when a requested conversation session or resource cannot be found."""
+
+    pass
+
+
+class ConversationStorageError(ConversationError):
+    """Raised when a conversation storage or retrieval operation fails."""
 
     pass
 
@@ -60,326 +65,91 @@ class ConversationInitializationError(ConversationError):
     pass
 
 
-class BaseConversationSession(ABC):
-    """Abstract interface defining the contract for conversation session lifecycle management."""
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize session manager resources and state."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close session manager and release allocated resources."""
-        ...
-
-    @abstractmethod
-    async def create_session(
-        self,
-        context: ConversationContext | None = None,
-    ) -> ConversationSession:
-        """Create and register a new conversation session instance.
-
-        Args:
-            context: Optional ConversationContext configuration.
-
-        Returns:
-            ConversationSession: Created conversation session entity.
-        """
-        ...
-
-    @abstractmethod
-    async def get_session(self, session_id: UUID) -> ConversationSession | None:
-        """Retrieve a conversation session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID.
-
-        Returns:
-            ConversationSession | None: Session instance if found, None otherwise.
-        """
-        ...
-
-    @abstractmethod
-    async def update_context(
-        self,
-        session_id: UUID,
-        context: ConversationContext,
-    ) -> ConversationContext:
-        """Update active conversation context settings for a session.
-
-        Args:
-            session_id: Unique session identifier UUID.
-            context: ConversationContext instance.
-
-        Returns:
-            ConversationContext: Updated conversation context entity.
-        """
-        ...
-
-    @abstractmethod
-    async def close_session(self, session_id: UUID) -> None:
-        """Close and archive a conversation session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID to close.
-        """
-        ...
-
-    @abstractmethod
-    async def list_sessions(self) -> tuple[ConversationSession, ...]:
-        """List all active and managed conversation sessions.
-
-        Returns:
-            tuple[ConversationSession, ...]: Immutable tuple of ConversationSession objects.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational health of the session manager.
-
-        Returns:
-            bool: True if healthy, False otherwise.
-        """
-        ...
-
-
-class BaseConversationMemory(ABC):
-    """Abstract interface defining the contract for conversation history and memory storage."""
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize memory storage resources."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close memory storage resources."""
-        ...
-
-    @abstractmethod
-    async def save_turn(self, session_id: UUID, turn: ConversationTurn) -> None:
-        """Persist a conversation turn for a session.
-
-        Args:
-            session_id: Unique session identifier UUID.
-            turn: ConversationTurn instance to record.
-        """
-        ...
-
-    @abstractmethod
-    async def get_turns(
-        self,
-        session_id: UUID,
-        limit: int | None = None,
-    ) -> tuple[ConversationTurn, ...]:
-        """Retrieve chronological conversation turns for a session.
-
-        Args:
-            session_id: Unique session identifier UUID.
-            limit: Optional maximum number of recent turns to retrieve.
-
-        Returns:
-            tuple[ConversationTurn, ...]: Immutable tuple of ConversationTurn objects.
-        """
-        ...
-
-    @abstractmethod
-    async def clear_memory(self, session_id: UUID) -> None:
-        """Purge all stored conversation turns for a session.
-
-        Args:
-            session_id: Unique session identifier UUID to clear.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational health of the memory storage component.
-
-        Returns:
-            bool: True if healthy, False otherwise.
-        """
-        ...
-
-
 class BaseConversationManager(ABC):
-    """Abstract interface defining the contract for conversation message and context coordination."""
+    """Abstract interface defining the contract for conversation, message, and session management."""
 
     @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize manager component resources."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close manager component resources."""
-        ...
-
-    @abstractmethod
-    async def create_session(
+    async def create_conversation(
         self,
-        context: ConversationContext | None = None,
-    ) -> ConversationSession:
-        """Create a new managed conversation session by delegating to session manager.
+        user_id: UUID | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> Conversation:
+        """Create and persist a new Conversation session entity.
 
         Args:
-            context: Optional ConversationContext configuration.
+            user_id: Optional user identifier UUID.
+            metadata: Optional key-value metadata mapping.
 
         Returns:
-            ConversationSession: Created session entity.
+            Conversation: Newly created Conversation model.
         """
         ...
 
     @abstractmethod
-    async def get_session(self, session_id: UUID) -> ConversationSession | None:
-        """Retrieve a conversation session by identifier.
+    async def get_conversation(self, conversation_id: UUID) -> Conversation:
+        """Retrieve a Conversation session model by identifier.
 
         Args:
-            session_id: Unique session identifier UUID.
+            conversation_id: Unique conversation identifier UUID.
 
         Returns:
-            ConversationSession | None: Session instance if found, None otherwise.
-        """
-        ...
+            Conversation: Retrieved Conversation model.
 
-    @abstractmethod
-    async def close_session(self, session_id: UUID) -> None:
-        """Close a conversation session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID to close.
+        Raises:
+            ConversationResourceNotFoundError: If conversation_id is not found.
         """
         ...
 
     @abstractmethod
     async def add_message(
         self,
-        session_id: UUID,
-        message: ConversationMessage,
-    ) -> ConversationTurn:
-        """Add a message to an active conversation session and update state.
+        conversation_id: UUID,
+        message: Message,
+    ) -> Conversation:
+        """Append a Message object to an active Conversation session.
 
         Args:
-            session_id: Unique session identifier UUID.
-            message: ConversationMessage command instance.
+            conversation_id: Unique conversation identifier UUID.
+            message: Message object to append.
 
         Returns:
-            ConversationTurn: Created or updated conversation turn.
+            Conversation: Updated Conversation model.
+
+        Raises:
+            ConversationResourceNotFoundError: If conversation_id is not found.
         """
         ...
 
     @abstractmethod
-    async def update_context(
+    async def get_messages(
         self,
-        session_id: UUID,
-        context: ConversationContext,
-    ) -> ConversationContext:
-        """Update active conversation context settings for a session.
+        conversation_id: UUID,
+        limit: int | None = None,
+    ) -> tuple[Message, ...]:
+        """Retrieve chronological Message objects for a conversation.
 
         Args:
-            session_id: Unique session identifier UUID.
-            context: ConversationContext instance.
+            conversation_id: Unique conversation identifier UUID.
+            limit: Optional maximum number of recent messages to retrieve.
 
         Returns:
-            ConversationContext: Updated conversation context entity.
+            tuple[Message, ...]: Immutable tuple of Message objects.
+
+        Raises:
+            ConversationResourceNotFoundError: If conversation_id is not found.
         """
-        ...
-
-    @abstractmethod
-    async def get_context(self, session_id: UUID) -> ConversationContext:
-        """Retrieve active conversation context settings for a session.
-
-        Args:
-            session_id: Unique session identifier UUID.
-
-        Returns:
-            ConversationContext: Active conversation context entity.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational health of the manager component.
-
-        Returns:
-            bool: True if healthy, False otherwise.
-        """
-        ...
-
-
-class BaseConversationEngine(ABC):
-    """Abstract top-level interface defining the complete Conversation Engine facade contract."""
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize conversation engine runtime components."""
         ...
 
     @abstractmethod
     async def close(self) -> None:
-        """Close and release all conversation engine components."""
+        """Close conversation manager resources and release connection pools."""
         ...
 
     @abstractmethod
-    async def create_session(
-        self,
-        context: ConversationContext | None = None,
-    ) -> ConversationSession:
-        """Create a new managed conversation session.
-
-        Args:
-            context: Optional ConversationContext configuration.
+    async def health_check(self) -> ComponentHealth:
+        """Perform an operational health check on the conversation manager component.
 
         Returns:
-            ConversationSession: Created session entity.
-        """
-        ...
-
-    @abstractmethod
-    async def get_session(self, session_id: UUID) -> ConversationSession | None:
-        """Retrieve a managed conversation session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID.
-
-        Returns:
-            ConversationSession | None: Session entity if found, None otherwise.
-        """
-        ...
-
-    @abstractmethod
-    async def close_session(self, session_id: UUID) -> None:
-        """Close a managed conversation session by identifier.
-
-        Args:
-            session_id: Unique session identifier UUID to close.
-        """
-        ...
-
-    @abstractmethod
-    async def add_message(
-        self,
-        session_id: UUID,
-        message: ConversationMessage,
-    ) -> ConversationTurn:
-        """Add a message to a conversation session and return the resulting turn.
-
-        Args:
-            session_id: Target session identifier UUID.
-            message: ConversationMessage to process.
-
-        Returns:
-            ConversationTurn: Resulting conversation turn.
-        """
-        ...
-
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational health of the overall conversation engine.
-
-        Returns:
-            bool: True if engine components are healthy, False otherwise.
+            ComponentHealth: Operational component health status model.
         """
         ...

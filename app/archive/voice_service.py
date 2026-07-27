@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.core.exceptions import BadRequestError
+
 from app.llm.models import LLMRequest
 from app.services.action_engine import ActionEngine, ExecutionPlan
 from app.services.ai_service import AIService
@@ -107,16 +107,16 @@ class VoiceService(BaseService):
             request: VoiceRequest instance to validate.
 
         Raises:
-            BadRequestError: If request is None, or session_id or audio_bytes are empty.
+            ValidationError: If request is None, or session_id or audio_bytes are empty.
         """
         if request is None:
-            raise BadRequestError("VoiceRequest cannot be None.")
+            raise ValidationError("VoiceRequest cannot be None.")
 
         if not request.session_id or not request.session_id.strip():
-            raise BadRequestError("session_id cannot be empty.")
+            raise ValidationError("session_id cannot be empty.")
 
         if not request.audio_bytes:
-            raise BadRequestError("audio_bytes cannot be empty.")
+            raise ValidationError("audio_bytes cannot be empty.")
 
     async def _call_stt(self, audio_bytes: bytes, language: str) -> str:
         """Helper method to invoke SpeechToTextService.
@@ -182,7 +182,7 @@ class VoiceService(BaseService):
             VoiceResponse: Combined output model containing transcript, response, commands, and audio.
 
         Raises:
-            BadRequestError: On request validation failure.
+            ValidationError: On request validation failure.
         """
         self._validate_request(request)
         logger.info("Voice request received [session_id=%s]", request.session_id)

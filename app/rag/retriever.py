@@ -1,159 +1,129 @@
-"""Concrete Retriever module for MantraSetu AgentOS.
+"""Retriever Service orchestration layer for MantraSetu AgentOS.
 
-This module implements Retriever for coordinating query text vector embedding generation and
-vector database similarity search to produce immutable SearchResult models.
+This module implements RetrieverService as the primary semantic retrieval orchestration facade,
+executing similarity searches via VectorStoreService and constructing RAGContext models for prompt augmentation.
 """
 
 from __future__ import annotations
 
-import time
-from typing import Any
-from uuid import UUID
-
-from app.rag.base import (
-    BaseEmbeddingProvider,
-    BaseRetriever,
-    BaseVectorDatabase,
+from app.core.models import ComponentHealth, SystemHealthStatus
+from app.rag.contracts import (
+    RAGInitializationError,
     RetrievalError,
 )
 from app.rag.models import (
+    RAGContext,
+    RetrievalRequest,
     RetrievalStatus,
-    RetrievedChunk,
-    SearchMetadata,
-    SearchQuery,
-    SearchResult,
 )
+from app.rag.vectordb import VectorStoreService
 
 
-class Retriever(BaseRetriever):
-    """Concrete retriever component implementing BaseRetriever contract.
+class RetrieverService:
+    """Service facade coordinating semantic retrieval and RAGContext assembly.
 
     Responsibility:
-        Validates SearchQuery requests, delegates embedding generation to BaseEmbeddingProvider,
-        executes similarity queries against BaseVectorDatabase, filters results by threshold,
-        measures total latency, and wraps output into immutable SearchResult models.
+        Accepts RetrievalRequest models, executes vector similarity searches through an injected VectorStoreService,
+        handles empty retrieval results gracefully, constructs assembled RAGContext outputs, and maps retrieval errors.
     """
 
-    def __init__(
-        self,
-        embedding_provider: BaseEmbeddingProvider,
-        vector_db: BaseVectorDatabase,
-    ) -> None:
-        """Initialize Retriever with injected embedding provider and vector database.
+    def __init__(self, vector_service: VectorStoreService) -> None:
+        """Initialize RetrieverService with an injected VectorStoreService dependency.
 
         Args:
-            embedding_provider: BaseEmbeddingProvider instance for query vectorization.
-            vector_db: BaseVectorDatabase instance for similarity search.
+            vector_service: Injected VectorStoreService implementation.
         """
-        self._embedding_provider = embedding_provider
-        self._vector_db = vector_db
+        self._vector_service = vector_service
+        self._initialized = False
 
-    async def retrieve(self, query: SearchQuery) -> SearchResult:
-        """Execute vector search retrieval for a SearchQuery payload.
-
-        Args:
-            query: SearchQuery payload model.
-
-        Returns:
-            SearchResult: Search response model containing retrieved chunks and latency.
+    def _require_initialized(self) -> None:
+        """Verify that the retriever service has been initialized.
 
         Raises:
-            RetrievalError: If query validation fails or sub-component execution fails.
+            RAGInitializationError: If initialize() has not been called.
         """
-        self._validate_query(query)
-        start_time = time.perf_counter()
+        if not self._initialized:
+            raise RAGInitializationError(
+                "RetrieverService is not initialized. Call initialize() first."
+            )
+
+    async def initialize(self) -> None:
+        """Initialize retriever service and underlying vector storage dependencies. Idempotent."""
+        if self._initialized:
+            return
+
+        if hasattr(self._vector_service, "initialize"):
+            await self._vector_service.initialize()
+
+        self._initialized = True
+
+    async def close(self) -> None:
+        """Close retriever service and release vector store resources."""
+        if hasattr(self._vector_service, "close"):
+            await self._vector_service.close()
+
+        self._initialized = False
+
+    async def retrieve(
+        self,
+        request: RetrievalRequest,
+    ) -> RAGContext:
+        """Execute semantic retrieval and assemble a complete RAGContext model.
+
+        Args:
+            request: RetrievalRequest model containing query text and top_k criteria.
+
+        Returns:
+            RAGContext: Assembled RAG context containing query and matching results.
+
+        Raises:
+            RAGInitializationError: If service is uninitialized.
+            RetrievalError: If search execution or context assembly fails.
+        """
+        self._require_initialized()
+        if not isinstance(request, RetrievalRequest):
+            raise RetrievalError("Invalid RetrievalRequest payload model provided.")
+        if not request.query or not request.query.strip():
+            raise RetrievalError("RetrievalRequest query string cannot be empty or blank.")
 
         try:
-            query_vector = await self._embedding_provider.embed_text(query.text)
-            raw_chunks = await self._vector_db.search(
-                query_vector=query_vector,
-                top_k=query.top_k,
-                filters=query.metadata.filters,
-            )
-
-            # Apply min_score filtering threshold
-            filtered_chunks = tuple(
-                c for c in raw_chunks if c.score >= query.min_score
-            )
-
-            status = (
-                RetrievalStatus.SUCCESS
-                if filtered_chunks
-                else RetrievalStatus.EMPTY
-            )
-            latency_ms = (time.perf_counter() - start_time) * 1000
-
-            return self._build_search_result(
-                query_id=query.query_id,
-                status=status,
-                chunks=filtered_chunks,
-                latency_ms=latency_ms,
-                metadata=query.metadata,
+            results = await self._vector_service.search(request)
+            return RAGContext(
+                query=request.query,
+                results=results,
+                metadata={
+                    "result_count": len(results),
+                    "status": RetrievalStatus.SUCCESS.value if results else RetrievalStatus.EMPTY.value,
+                },
             )
         except RetrievalError:
             raise
-        except Exception as exc:
-            raise RetrievalError("Retrieval operation failed.") from exc
+        except Exception as e:
+            raise RetrievalError(f"Semantic retrieval execution failed: {str(e)}") from e
 
-    async def health_check(self) -> bool:
-        """Check health status across embedding provider and vector database components.
-
-        Returns:
-            bool: True if both sub-components are operational, False otherwise.
-        """
-        try:
-            embed_healthy = await self._embedding_provider.health_check()
-            vdb_healthy = await self._vector_db.health_check()
-            return embed_healthy and vdb_healthy
-        except Exception:
-            return False
-
-    # ------------------------------------------------------------------
-    # Private Helper Methods
-    # ------------------------------------------------------------------
-
-    def _validate_query(self, query: SearchQuery) -> None:
-        """Validate input SearchQuery model integrity.
-
-        Args:
-            query: SearchQuery instance.
-
-        Raises:
-            RetrievalError: If query is None or text is empty/whitespace.
-        """
-        if not query or not isinstance(query, SearchQuery):
-            raise RetrievalError("SearchQuery cannot be None.")
-
-        if not query.text or not query.text.strip():
-            raise RetrievalError("SearchQuery text cannot be empty or blank.")
-
-        if query.top_k <= 0:
-            raise RetrievalError("SearchQuery top_k parameter must be greater than zero.")
-
-    def _build_search_result(
-        self,
-        query_id: UUID,
-        status: RetrievalStatus,
-        chunks: tuple[RetrievedChunk, ...],
-        latency_ms: float,
-        metadata: SearchMetadata,
-    ) -> SearchResult:
-        """Construct an immutable SearchResult domain model.
-
-        Args:
-            query_id: Associated query identifier UUID.
-            status: RetrievalStatus enum outcome.
-            chunks: Immutable tuple of RetrievedChunk models.
-            latency_ms: Measured execution latency in milliseconds.
-            metadata: SearchMetadata instance.
+    async def health_check(self) -> ComponentHealth:
+        """Check operational health of the retriever service and underlying vector store.
 
         Returns:
-            SearchResult: Final response model.
+            ComponentHealth: Operational component health status model.
         """
-        return SearchResult(
-            query_id=query_id,
-            status=status,
-            retrieved_chunks=chunks,
-            latency_ms=latency_ms,
-            metadata=metadata,
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="retriever_service",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="RetrieverService uninitialized.",
+            )
+
+        vector_health = await self._vector_service.health_check()
+        is_healthy = (
+            isinstance(vector_health, ComponentHealth)
+            and vector_health.status == SystemHealthStatus.HEALTHY
+        )
+
+        return ComponentHealth(
+            component_name="retriever_service",
+            status=SystemHealthStatus.HEALTHY if is_healthy else SystemHealthStatus.UNHEALTHY,
+            message="RetrieverService operational."
+            if is_healthy
+            else "RetrieverService vector store degraded.",
         )

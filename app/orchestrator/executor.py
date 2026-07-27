@@ -1,307 +1,138 @@
-"""Orchestrator Executor module for MantraSetu AgentOS.
+"""Execution Manager Service for MantraSetu AgentOS.
 
-This module implements OrchestratorExecutor for executing an ExecutionPlan sequence,
-enforcing dependency resolution, delegating target routing to BaseRouter, and dispatching
-step execution strictly to injected BaseExecutionHandler implementations.
+This module implements ExecutionManager as the downstream service execution coordination
+layer for the Orchestrator subsystem, remaining provider independent through the
+BaseExecutionManager abstract contract.
 """
 
 from __future__ import annotations
 
-import asyncio
-import time
-from typing import Any, Mapping
-from uuid import UUID
-
+from app.core.models import ComponentHealth, SystemHealthStatus
 from app.orchestrator.base import (
-    BaseExecutionHandler,
-    BaseExecutor,
-    BaseRouter,
-    ExecutionError,
+    BaseExecutionManager,
+    ExecutionRoutingError,
+    OrchestratorInitializationError,
 )
 from app.orchestrator.models import (
-    ExecutionContext,
-    ExecutionMetadata,
-    ExecutionPlan,
-    ExecutionResult,
-    ExecutionStatus,
-    ExecutionStep,
-    ExecutionTarget,
+    ExecutionRoute,
+    OrchestratorContext,
+    OrchestratorResponse,
 )
 
 
-class OrchestratorExecutor(BaseExecutor):
-    """Production workflow execution engine implementing BaseExecutor contract.
+class ExecutionManager:
+    """Service facade coordinating downstream service execution via resolved ExecutionRoute.
 
     Responsibility:
-        Validates ExecutionPlan step dependency graphs, delegates target subsystem routing
-        to BaseRouter, dispatches step execution to injected BaseExecutionHandler models,
-        aggregates step outputs deterministically, and supports cooperative cancellation.
+        Accepts an ExecutionRoute and OrchestratorContext, delegates execution to an injected
+        BaseExecutionManager provider, translates execution failures into domain errors,
+        and manages operational lifecycle health.
+
+    Design Notes:
+        ExecutionManager deliberately avoids direct imports of AgentService, RAGService,
+        NavigationService, or BrowserService. All downstream coordination is abstracted
+        through the BaseExecutionManager interface to maintain clean dependency boundaries.
     """
 
-    def __init__(
-        self,
-        router: BaseRouter,
-        handlers: Mapping[ExecutionTarget, BaseExecutionHandler],
-    ) -> None:
-        """Initialize OrchestratorExecutor with router and handler mapping dependencies.
+    def __init__(self, manager: BaseExecutionManager) -> None:
+        """Initialize ExecutionManager with an injected BaseExecutionManager dependency.
 
         Args:
-            router: BaseRouter implementation for target resolution.
-            handlers: Injected mapping of ExecutionTarget enums to BaseExecutionHandler instances.
+            manager: Injected BaseExecutionManager implementation responsible for
+                     coordinating downstream service execution.
         """
-        self._router = router
-        self._handlers: dict[ExecutionTarget, BaseExecutionHandler] = dict(handlers)
-        self._cancelled_plans: set[UUID] = set()
-        self._lock = asyncio.Lock()
+        self._manager = manager
+        self._initialized = False
 
-    async def cancel(self, plan_id: UUID) -> None:
-        """Register a cooperative cancellation request for an active plan execution.
-
-        Args:
-            plan_id: Unique plan identifier UUID to cancel.
-        """
-        async with self._lock:
-            self._cancelled_plans.add(plan_id)
-
-    async def execute(self, plan: ExecutionPlan) -> ExecutionResult:
-        """Execute an ExecutionPlan sequence and return an immutable ExecutionResult.
-
-        Args:
-            plan: ExecutionPlan model specifying steps and parameters.
-
-        Returns:
-            ExecutionResult: Immutable final outcome result model.
+    def _require_initialized(self) -> None:
+        """Verify that the execution manager service has been initialized.
 
         Raises:
-            ExecutionError: If plan validation fails, dependencies fail, or a step execution errors.
+            OrchestratorInitializationError: If initialize() has not been called.
         """
-        self._validate_plan(plan)
-        context = self._prepare_context(plan)
-        return await self._execute_plan(plan, context)
-
-    # ------------------------------------------------------------------
-    # Private Execution Helpers
-    # ------------------------------------------------------------------
-
-    def _validate_plan(self, plan: ExecutionPlan) -> None:
-        """Validate input ExecutionPlan integrity.
-
-        Args:
-            plan: ExecutionPlan model.
-
-        Raises:
-            ExecutionError: If plan is None, missing plan_id, or has no steps.
-        """
-        if not plan:
-            raise ExecutionError("ExecutionPlan cannot be None.")
-
-        if not plan.plan_id:
-            raise ExecutionError("ExecutionPlan missing required plan_id.")
-
-        if not plan.steps:
-            raise ExecutionError("ExecutionPlan contains no steps to execute.")
-
-    def _prepare_context(self, plan: ExecutionPlan) -> ExecutionContext:
-        """Create an initial immutable ExecutionContext for a plan.
-
-        Args:
-            plan: ExecutionPlan model.
-
-        Returns:
-            ExecutionContext: Initial runtime context model.
-        """
-        return ExecutionContext(
-            plan_id=plan.plan_id,
-            shared_variables={},
-        )
-
-    async def _execute_plan(
-        self,
-        plan: ExecutionPlan,
-        initial_context: ExecutionContext,
-    ) -> ExecutionResult:
-        """Iterate through plan steps, enforce dependencies, and dispatch execution.
-
-        Args:
-            plan: ExecutionPlan model.
-            initial_context: Initial ExecutionContext instance.
-
-        Returns:
-            ExecutionResult: Final result model.
-
-        Raises:
-            ExecutionError: If step dependency checks fail or step execution encounters errors.
-        """
-        start_time = time.perf_counter()
-        context = initial_context
-        completed_step_ids: set[UUID] = set()
-
-        for step in plan.steps:
-            if await self._is_cancelled(plan.plan_id):
-                await self._clear_cancellation(plan.plan_id)
-                execution_time = (time.perf_counter() - start_time) * 1000
-                return self._finalize_result(
-                    plan_id=plan.plan_id,
-                    status=ExecutionStatus.CANCELLED,
-                    outputs=context.shared_variables,
-                    error=f"Execution cancelled for plan {plan.plan_id}.",
-                    execution_time_ms=execution_time,
-                )
-
-            if not self._check_dependencies(step, completed_step_ids):
-                execution_time = (time.perf_counter() - start_time) * 1000
-                raise ExecutionError(
-                    f"Step '{step.name}' ({step.step_id}) unmet dependencies: {step.dependencies}."
-                )
-
-            context = context.model_copy(
-                update={"current_step_id": step.step_id}
+        if not self._initialized:
+            raise OrchestratorInitializationError(
+                "ExecutionManager is not initialized. Call initialize() first."
             )
 
-            try:
-                out = await self._execute_step(step, context)
-                completed_step_ids.add(step.step_id)
+    async def initialize(self) -> None:
+        """Initialize execution manager and underlying provider runtime state. Idempotent."""
+        if self._initialized:
+            return
 
-                merged_outputs = self._aggregate_outputs(
-                    context.shared_variables, out
-                )
+        if hasattr(self._manager, "initialize"):
+            await self._manager.initialize()
 
-                context = context.model_copy(
-                    update={
-                        "completed_step_ids": tuple(completed_step_ids),
-                        "shared_variables": merged_outputs,
-                    }
-                )
-            except ExecutionError:
-                raise
-            except Exception as e:
-                execution_time = (time.perf_counter() - start_time) * 1000
-                raise ExecutionError(
-                    f"Execution failed at step '{step.name}' ({step.step_id}): {str(e)}"
-                ) from e
+        self._initialized = True
 
-        execution_time = (time.perf_counter() - start_time) * 1000
-        return self._finalize_result(
-            plan_id=plan.plan_id,
-            status=ExecutionStatus.COMPLETED,
-            outputs=context.shared_variables,
-            error=None,
-            execution_time_ms=execution_time,
-        )
+    async def close(self) -> None:
+        """Close execution manager and release provider resources."""
+        if hasattr(self._manager, "close"):
+            await self._manager.close()
 
-    async def _execute_step(
+        self._initialized = False
+
+    async def execute(
         self,
-        step: ExecutionStep,
-        context: ExecutionContext,
-    ) -> dict[str, Any]:
-        """Route step and delegate execution to the injected BaseExecutionHandler.
+        route: ExecutionRoute,
+        context: OrchestratorContext,
+    ) -> OrchestratorResponse:
+        """Validate inputs and execute a resolved ExecutionRoute via injected manager provider.
 
         Args:
-            step: ExecutionStep model to execute.
-            context: Current ExecutionContext state.
+            route: ExecutionRoute model resolved from intent classification and routing.
+            context: Active OrchestratorContext model snapshot for this request.
 
         Returns:
-            dict[str, Any]: Output parameters dictionary from handler.
+            OrchestratorResponse: Final orchestration response from downstream service execution.
 
         Raises:
-            ExecutionError: If routing fails or no handler is registered for target.
+            OrchestratorInitializationError: If service is uninitialized.
+            ExecutionRoutingError: If route or context parameters are invalid or execution fails.
         """
-        target = await self._router.route(step)
-        handler = self._handlers.get(target)
+        self._require_initialized()
+        if not isinstance(route, ExecutionRoute):
+            raise ExecutionRoutingError("Invalid ExecutionRoute instance provided.")
+        if not isinstance(context, OrchestratorContext):
+            raise ExecutionRoutingError("Invalid OrchestratorContext instance provided.")
+        if not route.services:
+            raise ExecutionRoutingError("ExecutionRoute services tuple cannot be empty.")
 
-        if not handler:
-            raise ExecutionError(
-                f"No execution handler registered for target '{target}' (step '{step.name}')."
+        try:
+            return await self._manager.execute(route, context)
+        except ExecutionRoutingError:
+            raise
+        except Exception as e:
+            raise ExecutionRoutingError(
+                f"Downstream execution failed for route '{route.route_id}' "
+                f"with services {list(route.services)}: {str(e)}"
+            ) from e
+
+    async def health_check(self) -> ComponentHealth:
+        """Check operational health of the execution manager service.
+
+        Returns:
+            ComponentHealth: Operational component health status model.
+        """
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="execution_manager",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="ExecutionManager uninitialized.",
             )
 
-        return await handler.execute(step, context)
+        manager_healthy = True
+        if hasattr(self._manager, "health_check"):
+            res = await self._manager.health_check()
+            if isinstance(res, ComponentHealth):
+                manager_healthy = res.status == SystemHealthStatus.HEALTHY
+            elif isinstance(res, bool):
+                manager_healthy = res
 
-    def _check_dependencies(
-        self,
-        step: ExecutionStep,
-        completed_step_ids: set[UUID],
-    ) -> bool:
-        """Check if all prerequisite step dependencies have completed.
-
-        Args:
-            step: Target ExecutionStep model.
-            completed_step_ids: Set of completed step UUIDs.
-
-        Returns:
-            bool: True if dependencies met, False otherwise.
-        """
-        if not step.dependencies:
-            return True
-        return all(dep_id in completed_step_ids for dep_id in step.dependencies)
-
-    def _aggregate_outputs(
-        self,
-        existing_outputs: dict[str, Any],
-        step_output: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Deterministically aggregate step outputs without silent key corruption.
-
-        Args:
-            existing_outputs: Currently accumulated outputs dictionary.
-            step_output: New step output dictionary to merge.
-
-        Returns:
-            dict[str, Any]: Merged output dictionary.
-        """
-        merged = dict(existing_outputs)
-        if isinstance(step_output, dict):
-            merged.update(step_output)
-        return merged
-
-    def _finalize_result(
-        self,
-        plan_id: UUID,
-        status: ExecutionStatus,
-        outputs: dict[str, Any],
-        error: str | None,
-        execution_time_ms: float,
-    ) -> ExecutionResult:
-        """Construct final immutable ExecutionResult instance.
-
-        Args:
-            plan_id: Plan identifier UUID.
-            status: Final ExecutionStatus enum value.
-            outputs: Merged outputs dictionary.
-            error: Optional diagnostic error message string.
-            execution_time_ms: Execution duration in milliseconds.
-
-        Returns:
-            ExecutionResult: Final result model.
-        """
-        return ExecutionResult(
-            plan_id=plan_id,
-            status=status,
-            outputs=outputs,
-            error=error,
-            execution_time_ms=execution_time_ms,
-            metadata=ExecutionMetadata(
-                source="OrchestratorExecutor",
-                tags=(status.value,),
-            ),
+        return ComponentHealth(
+            component_name="execution_manager",
+            status=SystemHealthStatus.HEALTHY if manager_healthy else SystemHealthStatus.UNHEALTHY,
+            message="ExecutionManager operational."
+            if manager_healthy
+            else "ExecutionManager provider degraded.",
         )
-
-    async def _is_cancelled(self, plan_id: UUID) -> bool:
-        """Check thread-safely if a plan cancellation has been requested.
-
-        Args:
-            plan_id: Plan identifier UUID.
-
-        Returns:
-            bool: True if cancelled, False otherwise.
-        """
-        async with self._lock:
-            return plan_id in self._cancelled_plans
-
-    async def _clear_cancellation(self, plan_id: UUID) -> None:
-        """Clear a plan cancellation record after handling.
-
-        Args:
-            plan_id: Plan identifier UUID.
-        """
-        async with self._lock:
-            self._cancelled_plans.discard(plan_id)

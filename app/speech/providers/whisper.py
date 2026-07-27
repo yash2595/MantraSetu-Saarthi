@@ -11,12 +11,12 @@ import time
 import httpx
 
 from app.core.exceptions import (
-    BadRequestError,
+    
     ConflictError,
-    ForbiddenError,
-    InternalServerException,
-    NotFoundError,
-    UnauthorizedError,
+    AuthorizationError,
+    InternalServerError,
+    ResourceNotFoundError,
+    AuthenticationError,
     ValidationError,
 )
 from app.speech.base import BaseSpeechToTextProvider
@@ -42,22 +42,22 @@ def _raise_for_http_status(exc: httpx.HTTPStatusError) -> None:
     details = {"status_code": status_code, "response": response_text}
 
     if status_code == 400:
-        raise BadRequestError(
+        raise ValidationError(
             message=f"Whisper bad request (400): {response_text}",
             details=details,
         ) from exc
     elif status_code == 401:
-        raise UnauthorizedError(
+        raise AuthenticationError(
             message=f"Whisper unauthorized (401): {response_text}",
             details=details,
         ) from exc
     elif status_code == 403:
-        raise ForbiddenError(
+        raise AuthorizationError(
             message=f"Whisper forbidden (403): {response_text}",
             details=details,
         ) from exc
     elif status_code == 404:
-        raise NotFoundError(
+        raise ResourceNotFoundError(
             message=f"Whisper model or endpoint not found (404): {response_text}",
             details=details,
         ) from exc
@@ -72,7 +72,7 @@ def _raise_for_http_status(exc: httpx.HTTPStatusError) -> None:
             details=details,
         ) from exc
     else:
-        raise InternalServerException(
+        raise InternalServerError(
             message=f"Whisper non-retryable HTTP error ({status_code}): {response_text}",
             error_code="STT_PROVIDER_HTTP_ERROR",
             details=details,
@@ -145,13 +145,13 @@ class WhisperProvider(BaseSpeechToTextProvider):
             request: SpeechToTextRequest model to validate.
 
         Raises:
-            BadRequestError: If request is None or audio_bytes is empty.
+            ValidationError: If request is None or audio_bytes is empty.
         """
         if request is None:
-            raise BadRequestError("SpeechToTextRequest cannot be None.")
+            raise ValidationError("SpeechToTextRequest cannot be None.")
 
         if not request.audio_bytes:
-            raise BadRequestError("SpeechToTextRequest.audio_bytes cannot be empty.")
+            raise ValidationError("SpeechToTextRequest.audio_bytes cannot be empty.")
 
     async def transcribe(
         self,
@@ -166,14 +166,14 @@ class WhisperProvider(BaseSpeechToTextProvider):
             SpeechToTextResponse: Transcribed output model.
 
         Raises:
-            BadRequestError: On request validation failure.
-            InternalServerException: If API key is unconfigured or on API/network failure.
+            ValidationError: On request validation failure.
+            InternalServerError: If API key is unconfigured or on API/network failure.
         """
         self._validate_request(request)
 
         api_key_val = self._settings.api_key.get_secret_value()
         if not api_key_val:
-            raise InternalServerException(
+            raise InternalServerError(
                 message="Whisper Speech-to-Text API key (SPEECH_API_KEY) is not configured.",
                 error_code="SPEECH_KEY_MISSING",
             )
@@ -287,7 +287,7 @@ class WhisperProvider(BaseSpeechToTextProvider):
             duration_ms,
             str(last_error),
         )
-        raise InternalServerException(
+        raise InternalServerError(
             message=f"Whisper STT request failed after {max_attempts} attempts: {last_error}",
             error_code="STT_REQUEST_FAILED",
         ) from last_error

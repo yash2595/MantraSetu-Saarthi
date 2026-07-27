@@ -11,12 +11,12 @@ from typing import Any
 import httpx
 
 from app.core.exceptions import (
-    BadRequestError,
+    
     ConflictError,
-    ForbiddenError,
-    InternalServerException,
-    NotFoundError,
-    UnauthorizedError,
+    AuthorizationError,
+    InternalServerError,
+    ResourceNotFoundError,
+    AuthenticationError,
     ValidationError,
 )
 from app.llm.models import HealthStatus
@@ -43,22 +43,22 @@ def _raise_for_http_status(exc: httpx.HTTPStatusError) -> None:
     details = {"status_code": status_code, "response": response_text}
 
     if status_code == 400:
-        raise BadRequestError(
+        raise ValidationError(
             message=f"FishSpeech bad request (400): {response_text}",
             details=details,
         ) from exc
     elif status_code == 401:
-        raise UnauthorizedError(
+        raise AuthenticationError(
             message=f"FishSpeech unauthorized (401): {response_text}",
             details=details,
         ) from exc
     elif status_code == 403:
-        raise ForbiddenError(
+        raise AuthorizationError(
             message=f"FishSpeech forbidden (403): {response_text}",
             details=details,
         ) from exc
     elif status_code == 404:
-        raise NotFoundError(
+        raise ResourceNotFoundError(
             message=f"FishSpeech model or endpoint not found (404): {response_text}",
             details=details,
         ) from exc
@@ -73,7 +73,7 @@ def _raise_for_http_status(exc: httpx.HTTPStatusError) -> None:
             details=details,
         ) from exc
     else:
-        raise InternalServerException(
+        raise InternalServerError(
             message=f"FishSpeech non-retryable HTTP error ({status_code}): {response_text}",
             error_code="TTS_PROVIDER_HTTP_ERROR",
             details=details,
@@ -148,13 +148,13 @@ class FishSpeechProvider(BaseTextToSpeechProvider):
             request: TextToSpeechRequest model to validate.
 
         Raises:
-            BadRequestError: If request is None or text is empty.
+            ValidationError: If request is None or text is empty.
         """
         if request is None:
-            raise BadRequestError("TextToSpeechRequest cannot be None.")
+            raise ValidationError("TextToSpeechRequest cannot be None.")
 
         if not request.text or not request.text.strip():
-            raise BadRequestError("TextToSpeechRequest.text cannot be empty.")
+            raise ValidationError("TextToSpeechRequest.text cannot be empty.")
 
     async def synthesize(
         self,
@@ -169,14 +169,14 @@ class FishSpeechProvider(BaseTextToSpeechProvider):
             TextToSpeechResponse: Synthesized audio output model.
 
         Raises:
-            BadRequestError: On request validation failure.
-            InternalServerException: If API key is unconfigured or on API/network failure.
+            ValidationError: On request validation failure.
+            InternalServerError: If API key is unconfigured or on API/network failure.
         """
         self._validate_request(request)
 
         api_key_val = self._settings.api_key.get_secret_value()
         if not api_key_val:
-            raise InternalServerException(
+            raise InternalServerError(
                 message="FishSpeech API key (TTS_API_KEY) is not configured.",
                 error_code="TTS_KEY_MISSING",
             )
@@ -284,7 +284,7 @@ class FishSpeechProvider(BaseTextToSpeechProvider):
             duration_ms,
             str(last_error),
         )
-        raise InternalServerException(
+        raise InternalServerError(
             message=f"FishSpeech TTS request failed after {max_attempts} attempts: {last_error}",
             error_code="TTS_REQUEST_FAILED",
         ) from last_error

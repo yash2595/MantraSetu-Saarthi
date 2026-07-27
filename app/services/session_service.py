@@ -9,7 +9,7 @@ import threading
 
 from pydantic import BaseModel, Field
 
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, ResourceNotFoundError
 from app.core.utils.datetime import utc_now
 from app.llm.models import LLMRequest, LLMResponse
 from app.services.base import BaseService
@@ -59,10 +59,10 @@ class SessionService(BaseService):
             str: Trimmed session_id string.
 
         Raises:
-            BadRequestError: If session_id is None, empty, or blank.
+            ValueError: If session_id is None, empty, or blank.
         """
         if not session_id or not isinstance(session_id, str) or not session_id.strip():
-            raise BadRequestError("session_id must be a non-empty string.")
+            raise ValueError("session_id must be a non-empty string.")
 
         return session_id.strip()
 
@@ -76,7 +76,7 @@ class SessionService(BaseService):
             bool: True if the session exists, False otherwise.
 
         Raises:
-            BadRequestError: If session_id is invalid.
+            ValueError: If session_id is invalid.
         """
         normalized_id = self._validate_session_id(session_id)
         with self._lock:
@@ -89,7 +89,7 @@ class SessionService(BaseService):
             session_id: Unique string identifier for the new session.
 
         Raises:
-            BadRequestError: If session_id is invalid.
+            ValueError: If session_id is invalid.
             ConflictError: If a session with session_id already exists.
         """
         normalized_id = self._validate_session_id(session_id)
@@ -119,16 +119,16 @@ class SessionService(BaseService):
             message: LLMRequest or LLMResponse object to append.
 
         Raises:
-            BadRequestError: If session_id or message is invalid.
-            NotFoundError: If the session does not exist.
+            ValueError: If session_id or message is invalid.
+            ResourceNotFoundError: If the session does not exist.
         """
         normalized_id = self._validate_session_id(session_id)
         if message is None or not isinstance(message, (LLMRequest, LLMResponse)):
-            raise BadRequestError("Message must be an instance of LLMRequest or LLMResponse.")
+            raise ValueError("Message must be an instance of LLMRequest or LLMResponse.")
 
         with self._lock:
             if normalized_id not in self._sessions:
-                raise NotFoundError(f"Session '{normalized_id}' not found.")
+                raise ResourceNotFoundError(f"Session '{normalized_id}' not found.")
 
             session = self._sessions[normalized_id]
             session.conversation_history.append(message)
@@ -149,14 +149,14 @@ class SessionService(BaseService):
             list[LLMRequest | LLMResponse]: Copy of the ordered message history list.
 
         Raises:
-            BadRequestError: If session_id is invalid.
-            NotFoundError: If the session does not exist.
+            ValueError: If session_id is invalid.
+            ResourceNotFoundError: If the session does not exist.
         """
         normalized_id = self._validate_session_id(session_id)
 
         with self._lock:
             if normalized_id not in self._sessions:
-                raise NotFoundError(f"Session '{normalized_id}' not found.")
+                raise ResourceNotFoundError(f"Session '{normalized_id}' not found.")
 
             session = self._sessions[normalized_id]
             return list(session.conversation_history)
@@ -168,14 +168,14 @@ class SessionService(BaseService):
             session_id: Unique string identifier of the session.
 
         Raises:
-            BadRequestError: If session_id is invalid.
-            NotFoundError: If the session does not exist.
+            ValueError: If session_id is invalid.
+            ResourceNotFoundError: If the session does not exist.
         """
         normalized_id = self._validate_session_id(session_id)
 
         with self._lock:
             if normalized_id not in self._sessions:
-                raise NotFoundError(f"Session '{normalized_id}' not found.")
+                raise ResourceNotFoundError(f"Session '{normalized_id}' not found.")
 
             session = self._sessions[normalized_id]
             session.conversation_history.clear()
@@ -189,14 +189,14 @@ class SessionService(BaseService):
             session_id: Unique string identifier of the session.
 
         Raises:
-            BadRequestError: If session_id is invalid.
-            NotFoundError: If the session does not exist.
+            ValueError: If session_id is invalid.
+            ResourceNotFoundError: If the session does not exist.
         """
         normalized_id = self._validate_session_id(session_id)
 
         with self._lock:
             if normalized_id not in self._sessions:
-                raise NotFoundError(f"Session '{normalized_id}' not found.")
+                raise ResourceNotFoundError(f"Session '{normalized_id}' not found.")
 
             del self._sessions[normalized_id]
             logger.info("Session deleted [session_id=%s]", normalized_id)

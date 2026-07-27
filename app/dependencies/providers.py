@@ -7,6 +7,7 @@ from app.services.conversation_service import ConversationService
 from app.services.speech_to_text_service import SpeechToTextService
 from app.services.text_to_speech_service import TextToSpeechService
 from app.session.service import SessionService
+from app.session.store import SessionStore
 from app.speech.factory import speech_to_text_factory
 from app.speech.providers.sarvam import SarvamProvider
 from app.speech.providers.whisper import WhisperProvider
@@ -38,7 +39,8 @@ text_to_speech_factory.register(_cosyvoice_provider, overwrite=False)
 _ai_service = AIService(factory=_llm_factory, default_provider_name="openrouter")
 _speech_service = SpeechToTextService(provider=_whisper_provider)
 _tts_service = TextToSpeechService(provider=_fish_speech_provider)
-_session_service = SessionService()
+_session_store = SessionStore()
+_session_service = SessionService(store=_session_store)
 
 _conversation_service = ConversationService(
     speech_service=_speech_service,

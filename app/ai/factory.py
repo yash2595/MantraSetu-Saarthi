@@ -40,31 +40,27 @@ class AIFactory:
 
     def register_builder(
         self,
-        provider_type: ProviderType | str,
+        provider_type: str,
         builder: Callable[..., BaseAIProvider],
     ) -> None:
         """Register a factory builder function or class for a provider type.
 
         Args:
-            provider_type: ProviderType enum or string identifier.
+            provider_type: String identifier for the provider type.
             builder: Callable instantiating a BaseAIProvider instance.
         """
-        key = (
-            provider_type.lower()
-            if isinstance(provider_type, str)
-            else provider_type
-        )
+        key = provider_type.lower()
         self._builders[key] = builder
 
     async def create_provider(
         self,
-        provider_type: ProviderType | str,
+        provider_type: str,
         **kwargs: Any,
     ) -> BaseAIProvider:
         """Instantiate, initialize, and register a new AI provider instance.
 
         Args:
-            provider_type: ProviderType enum or string identifier.
+            provider_type: String identifier for the provider type.
             **kwargs: Configuration parameters passed to provider constructor.
 
         Returns:
@@ -74,11 +70,7 @@ class AIFactory:
             AIProviderError: If no builder is registered for provider_type or registration fails.
             AIInitializationError: If provider initialize() fails.
         """
-        key = (
-            provider_type.lower()
-            if isinstance(provider_type, str)
-            else provider_type
-        )
+        key = provider_type.lower()
 
         builder = self._builders.get(key)
         if not builder:
@@ -101,7 +93,7 @@ class AIFactory:
             ) from e
 
         try:
-            await self._registry.register(provider_type, provider)
+            await self._registry.register(key, provider)
         except Exception as e:
             await provider.close()
             raise AIProviderError(
@@ -112,23 +104,24 @@ class AIFactory:
 
     async def get_or_create(
         self,
-        provider_type: ProviderType | str,
+        provider_type: str,
         **kwargs: Any,
     ) -> BaseAIProvider:
         """Retrieve an existing registered provider or create, initialize, and register a new one.
 
         Args:
-            provider_type: ProviderType enum or string identifier.
+            provider_type: String identifier for the provider type.
             **kwargs: Configuration parameters for provider instantiation if creation needed.
 
         Returns:
             BaseAIProvider: Registered provider instance.
         """
+        key = provider_type.lower()
         async with self._lock:
-            if await self._registry.contains(provider_type):
-                return await self._registry.get(provider_type)
+            if await self._registry.contains(key):
+                return await self._registry.get(key)
 
-            return await self.create_provider(provider_type, **kwargs)
+            return await self.create_provider(key, **kwargs)
 
     async def shutdown(self) -> None:
         """Gracefully close all registered providers and clear the registry."""

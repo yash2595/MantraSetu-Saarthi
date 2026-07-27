@@ -1,16 +1,14 @@
 """Conversation domain subsystem for MantraSetu AgentOS."""
 
 from app.conversation.base import (
-    BaseConversationEngine,
     BaseConversationManager,
-    BaseConversationMemory,
-    BaseConversationSession,
     ConversationClosedError,
     ConversationContextError,
     ConversationError,
     ConversationInitializationError,
     ConversationMemoryError,
-    ConversationNotFoundError,
+    ConversationResourceNotFoundError,
+    ConversationStorageError,
     ConversationValidationError,
 )
 from app.conversation.manager import ConversationManager
@@ -39,16 +37,14 @@ __all__ = [
     "ConversationSession",
     "ConversationBatch",
     "Metadata",
-    "BaseConversationSession",
-    "BaseConversationMemory",
     "BaseConversationManager",
-    "BaseConversationEngine",
     "ConversationSessionManager",
     "ConversationMemory",
     "ConversationManager",
     "ConversationService",
     "ConversationError",
-    "ConversationNotFoundError",
+    "ConversationResourceNotFoundError",
+    "ConversationStorageError",
     "ConversationClosedError",
     "ConversationMemoryError",
     "ConversationContextError",

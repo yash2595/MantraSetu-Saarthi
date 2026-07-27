@@ -1,17 +1,39 @@
-"""Session Management package exports."""
+"""Session domain subsystem for MantraSetu AgentOS."""
 
-from app.session.base import BaseSessionStore
-from app.session.models import SessionData, SessionMessage
+from app.session.base import (
+    BaseSessionManager,
+    SessionError,
+    SessionExpiredError,
+    SessionInitializationError,
+    SessionResourceNotFoundError,
+    SessionStorageError,
+    SessionValidationError,
+)
+from app.session.models import (
+    BaseSessionModel,
+    SessionActivity,
+    SessionContext,
+    SessionStatus,
+    UserSession,
+)
 from app.session.service import SessionService
-from app.session.settings import SessionSettings, session_settings
-from app.session.store import InMemorySessionStore
+from app.session.settings import SessionSettings
+from app.session.store import SessionStore
 
 __all__ = [
-    "BaseSessionStore",
-    "InMemorySessionStore",
-    "SessionData",
-    "SessionMessage",
+    "BaseSessionModel",
+    "SessionStatus",
+    "UserSession",
+    "SessionContext",
+    "SessionActivity",
+    "BaseSessionManager",
+    "SessionStore",
     "SessionService",
     "SessionSettings",
-    "session_settings",
+    "SessionError",
+    "SessionResourceNotFoundError",
+    "SessionExpiredError",
+    "SessionStorageError",
+    "SessionValidationError",
+    "SessionInitializationError",
 ]

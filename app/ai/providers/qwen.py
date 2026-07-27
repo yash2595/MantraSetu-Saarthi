@@ -2,7 +2,7 @@
 
 This module provides QwenAIProvider implementing BaseAIProvider for Qwen (DashScope) models
 using OpenAI-compatible HTTP REST endpoints with strict dependency injection, explicit request/response mapping,
-and comprehensive exception translation.
+and comprehensive exception translation into domain models and ComponentHealth probes.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ except ImportError:
 
 from app.ai.base import (
     AIInitializationError,
+    AIInferenceError,
     AIProviderError,
     AIRequestError,
     AIResponseError,
@@ -27,10 +28,9 @@ from app.ai.models import (
     AIRequest,
     AIResponse,
     AIStatus,
-    Message,
-    MessageRole,
     TokenUsage,
 )
+from app.core.models import ComponentHealth, SystemHealthStatus
 
 
 class QwenAIProvider(BaseAIProvider):
@@ -66,6 +66,15 @@ class QwenAIProvider(BaseAIProvider):
         self._client: httpx.AsyncClient | None = client
         self._client_owned = client is None
         self._initialized = False
+
+    @property
+    def provider_name(self) -> str:
+        """Return unique provider identifier name string.
+
+        Returns:
+            str: Provider identifier name string.
+        """
+        return "qwen"
 
     def _get_client(self) -> httpx.AsyncClient:
         """Retrieve verified active AsyncClient instance.
@@ -130,7 +139,7 @@ class QwenAIProvider(BaseAIProvider):
         Raises:
             AIInitializationError: If provider is uninitialized.
             AIRequestError: If request payload validation fails.
-            AIProviderError: If remote HTTP connection or status code fails.
+            AIInferenceError: If remote HTTP connection, timeout, or status code fails.
             AIResponseError: If response payload parsing fails.
         """
         client = self._get_client()
@@ -143,21 +152,21 @@ class QwenAIProvider(BaseAIProvider):
             response.raise_for_status()
             data = response.json()
         except httpx.TimeoutException as e:
-            raise AIProviderError(f"Qwen API request timed out after {self._timeout}s.") from e
+            raise AIInferenceError(f"Qwen API request timed out after {self._timeout}s.") from e
         except httpx.HTTPStatusError as e:
             err_text = e.response.text if e.response is not None else str(e)
-            raise AIProviderError(
+            raise AIInferenceError(
                 f"Qwen HTTP status error {e.response.status_code}: {err_text}"
             ) from e
         except httpx.RequestError as e:
-            raise AIProviderError(f"Qwen HTTP connection failed: {str(e)}") from e
+            raise AIInferenceError(f"Qwen HTTP connection failed: {str(e)}") from e
         except json.JSONDecodeError as e:
             raise AIResponseError(f"Invalid JSON received from Qwen API: {str(e)}") from e
         except Exception as e:
-            raise AIProviderError(f"Unexpected Qwen provider failure: {str(e)}") from e
+            raise AIInferenceError(f"Unexpected Qwen provider failure: {str(e)}") from e
 
         latency_ms = (time.perf_counter() - start_time) * 1000
-        return self._parse_response(data, target_model, latency_ms)
+        return self._parse_response(data, request.request_id, target_model, latency_ms)
 
     async def stream(self, request: AIRequest) -> AsyncIterator[str | dict[str, object]]:
         """Execute a streaming chat completion request yielding incremental chunk data.
@@ -170,7 +179,7 @@ class QwenAIProvider(BaseAIProvider):
 
         Raises:
             AIInitializationError: If provider is uninitialized.
-            AIProviderError: If streaming connection fails.
+            AIInferenceError: If streaming connection fails.
         """
         client = self._get_client()
         payload = self._build_request_payload(request, stream=True)
@@ -186,49 +195,49 @@ class QwenAIProvider(BaseAIProvider):
                         break
                     yield data_str
         except httpx.TimeoutException as e:
-            raise AIProviderError(f"Qwen streaming connection timed out.") from e
+            raise AIInferenceError("Qwen streaming connection timed out.") from e
         except httpx.HTTPStatusError as e:
             err_text = e.response.text if e.response is not None else str(e)
-            raise AIProviderError(
+            raise AIInferenceError(
                 f"Qwen streaming HTTP error {e.response.status_code}: {err_text}"
             ) from e
         except httpx.RequestError as e:
-            raise AIProviderError(f"Qwen streaming connection failed: {str(e)}") from e
+            raise AIInferenceError(f"Qwen streaming connection failed: {str(e)}") from e
         except Exception as e:
-            raise AIProviderError(f"Unexpected Qwen streaming failure: {str(e)}") from e
+            raise AIInferenceError(f"Unexpected Qwen streaming failure: {str(e)}") from e
 
-    async def health_check(self) -> dict[str, object]:
+    async def health_check(self) -> ComponentHealth:
         """Perform a lightweight health check probe using the models metadata endpoint.
 
         Returns:
-            dict[str, object]: Diagnostic health check dictionary.
+            ComponentHealth: Operational component health model.
         """
         if not self._initialized or self._client is None:
-            return {
-                "healthy": False,
-                "provider": "qwen",
-                "message": "QwenAIProvider is uninitialized.",
-            }
+            return ComponentHealth(
+                component_name=self.provider_name,
+                status=SystemHealthStatus.UNHEALTHY,
+                message="QwenAIProvider is uninitialized.",
+            )
 
         start_time = time.perf_counter()
         try:
             response = await self._client.get("/models")
             response.raise_for_status()
             latency = (time.perf_counter() - start_time) * 1000
-            return {
-                "healthy": True,
-                "provider": "qwen",
-                "latency_ms": latency,
-                "message": "Qwen models endpoint probe healthy.",
-            }
+            return ComponentHealth(
+                component_name=self.provider_name,
+                status=SystemHealthStatus.HEALTHY,
+                latency_ms=latency,
+                message="Qwen models endpoint probe healthy.",
+            )
         except Exception as e:
             latency = (time.perf_counter() - start_time) * 1000
-            return {
-                "healthy": False,
-                "provider": "qwen",
-                "latency_ms": latency,
-                "message": f"Qwen health probe failed: {str(e)}",
-            }
+            return ComponentHealth(
+                component_name=self.provider_name,
+                status=SystemHealthStatus.UNHEALTHY,
+                latency_ms=latency,
+                message=f"Qwen health probe failed: {str(e)}",
+            )
 
     # ------------------------------------------------------------------
     # Private Payload Builders & Parsers
@@ -247,9 +256,6 @@ class QwenAIProvider(BaseAIProvider):
 
         Returns:
             dict[str, Any]: JSON serializable payload dictionary.
-
-        Raises:
-            AIRequestError: If messages tuple is empty.
         """
         msg = request.message
         payload: dict[str, Any] = {
@@ -267,6 +273,7 @@ class QwenAIProvider(BaseAIProvider):
     def _parse_response(
         self,
         data: dict[str, Any],
+        request_id: Any,
         model: str,
         latency_ms: float,
     ) -> AIResponse:
@@ -274,6 +281,7 @@ class QwenAIProvider(BaseAIProvider):
 
         Args:
             data: API response dictionary.
+            request_id: Associated request UUID.
             model: Model identifier string.
             latency_ms: Execution latency in milliseconds.
 
@@ -300,6 +308,7 @@ class QwenAIProvider(BaseAIProvider):
             )
 
             return AIResponse(
+                request_id=request_id,
                 content=content,
                 model=model,
                 status=AIStatus.SUCCESS,
@@ -310,5 +319,3 @@ class QwenAIProvider(BaseAIProvider):
             raise
         except (KeyError, TypeError, ValueError) as e:
             raise AIResponseError(f"Failed to parse Qwen response payload: {str(e)}") from e
-
-

@@ -1,22 +1,19 @@
 """Abstract contracts and interfaces for the Orchestrator subsystem in MantraSetu AgentOS.
 
-This module defines abstract base classes for planning, routing, execution handlers, workflow execution,
-and orchestrator engine facades alongside domain exception hierarchies, enforcing Dependency Inversion.
+This module defines abstract base classes for intent detectors, execution routers,
+execution managers, and full orchestration pipelines alongside the domain exception hierarchy.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
-from uuid import UUID
 
 from app.orchestrator.models import (
-    ExecutionContext,
-    ExecutionPlan,
-    ExecutionRequest,
-    ExecutionResult,
-    ExecutionStep,
-    ExecutionTarget,
+    DetectedIntent,
+    ExecutionRoute,
+    OrchestratorContext,
+    OrchestratorResponse,
+    UserRequest,
 )
 
 
@@ -26,144 +23,129 @@ class OrchestratorError(Exception):
     pass
 
 
-class PlanningError(OrchestratorError):
-    """Raised when execution plan generation fails."""
+class IntentDetectionError(OrchestratorError):
+    """Raised when user intent classification or detection fails."""
 
     pass
 
 
 class RoutingError(OrchestratorError):
-    """Raised when step routing resolution fails."""
+    """Raised when intent-to-service execution routing resolution fails."""
 
     pass
 
 
-class ExecutionError(OrchestratorError):
-    """Raised when plan or step execution fails."""
+class ExecutionRoutingError(OrchestratorError):
+    """Raised when downstream service execution via resolved route fails."""
 
     pass
 
 
-class StateError(OrchestratorError):
-    """Raised when context or runtime state transition validation fails."""
+class OrchestrationExecutionError(OrchestratorError):
+    """Raised when the orchestration pipeline execution fails."""
 
     pass
 
 
-class HealthCheckError(OrchestratorError):
-    """Raised when an orchestrator component health probe fails."""
+class OrchestratorInitializationError(OrchestratorError):
+    """Raised when an orchestrator subsystem component initialization fails."""
 
     pass
 
 
-class BasePlanner(ABC):
-    """Abstract interface defining the contract for workflow plan generation."""
+class OrchestratorStoreError(OrchestratorError):
+    """Raised when orchestrator context storage operations fail."""
+
+    pass
+
+
+class BaseIntentDetector(ABC):
+    """Abstract interface defining the contract for user intent classification providers."""
 
     @abstractmethod
-    async def plan(self, request: ExecutionRequest) -> ExecutionPlan:
-        """Generate an ExecutionPlan DAG/sequence from an ExecutionRequest.
+    async def detect(
+        self,
+        request: UserRequest,
+    ) -> DetectedIntent:
+        """Analyze a UserRequest and classify the detected user intent.
 
         Args:
-            request: ExecutionRequest model specifying high-level task goal.
+            request: Incoming UserRequest model to classify.
 
         Returns:
-            ExecutionPlan: Generated execution plan entity.
+            DetectedIntent: Classified intent model with type, confidence, and entities.
+
+        Raises:
+            IntentDetectionError: If intent detection or classification fails.
         """
         ...
 
 
 class BaseRouter(ABC):
-    """Abstract interface defining the contract for step destination routing."""
+    """Abstract interface defining the contract for intent-based service execution routers."""
 
     @abstractmethod
-    async def route(self, step: ExecutionStep) -> ExecutionTarget:
-        """Determine target subsystem execution destination for a workflow step.
+    async def route(
+        self,
+        intent: DetectedIntent,
+        context: OrchestratorContext,
+    ) -> ExecutionRoute:
+        """Resolve the execution service route for a detected intent and orchestrator context.
 
         Args:
-            step: ExecutionStep model to route.
+            intent: DetectedIntent model from intent classification.
+            context: Active OrchestratorContext model snapshot.
 
         Returns:
-            ExecutionTarget: Target execution subsystem enum value.
+            ExecutionRoute: Resolved execution service routing plan model.
+
+        Raises:
+            RoutingError: If intent route resolution fails.
         """
         ...
 
 
-class BaseExecutionHandler(ABC):
-    """Abstract interface for target-specific step execution handlers."""
+class BaseExecutionManager(ABC):
+    """Abstract interface defining the contract for downstream service execution managers."""
 
     @abstractmethod
     async def execute(
         self,
-        step: ExecutionStep,
-        context: ExecutionContext,
-    ) -> dict[str, Any]:
-        """Execute a single workflow step and return output parameters.
+        route: ExecutionRoute,
+        context: OrchestratorContext,
+    ) -> OrchestratorResponse:
+        """Execute a resolved ExecutionRoute by coordinating downstream services.
 
         Args:
-            step: ExecutionStep model to execute.
-            context: Immutable ExecutionContext runtime state.
+            route: ExecutionRoute model resolved from intent classification.
+            context: Active OrchestratorContext model snapshot.
 
         Returns:
-            dict[str, Any]: Output parameters dictionary.
-        """
-        ...
+            OrchestratorResponse: Final orchestration response from downstream service execution.
 
-
-class BaseExecutor(ABC):
-    """Abstract interface defining the contract for workflow execution engine."""
-
-    @abstractmethod
-    async def execute(self, plan: ExecutionPlan) -> ExecutionResult:
-        """Execute an ExecutionPlan sequence and return final result.
-
-        Args:
-            plan: ExecutionPlan model to execute.
-
-        Returns:
-            ExecutionResult: Final outcome result model.
-        """
-        ...
-
-    @abstractmethod
-    async def cancel(self, plan_id: UUID) -> None:
-        """Cancel ongoing execution of a running plan.
-
-        Args:
-            plan_id: Unique plan identifier UUID to cancel.
+        Raises:
+            ExecutionRoutingError: If downstream service execution fails.
         """
         ...
 
 
 class BaseOrchestrator(ABC):
-    """Abstract top-level interface defining the complete Orchestrator subsystem contract."""
+    """Abstract interface defining the contract for the full orchestration pipeline."""
 
     @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize orchestrator runtime resources and sub-components."""
-        ...
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close orchestrator runtime and release resources."""
-        ...
-
-    @abstractmethod
-    async def execute(self, request: ExecutionRequest) -> ExecutionResult:
-        """Process an ExecutionRequest from planning through execution to result.
+    async def process(
+        self,
+        request: UserRequest,
+    ) -> OrchestratorResponse:
+        """Execute the complete orchestration pipeline for an incoming UserRequest.
 
         Args:
-            request: ExecutionRequest model payload.
+            request: Incoming UserRequest model to orchestrate.
 
         Returns:
-            ExecutionResult: Outcome result model.
-        """
-        ...
+            OrchestratorResponse: Final orchestration response model.
 
-    @abstractmethod
-    async def health_check(self) -> bool:
-        """Check operational health across orchestrator sub-components.
-
-        Returns:
-            bool: True if healthy, False otherwise.
+        Raises:
+            OrchestrationExecutionError: If orchestration pipeline execution fails.
         """
         ...

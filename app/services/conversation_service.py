@@ -6,7 +6,7 @@ Main service coordinating SpeechToText, AI Generation, and TextToSpeech services
 import logging
 import time
 
-from app.core.exceptions import BadRequestError, InternalServerException
+from app.core.exceptions import InternalServerError
 from app.llm.models import LLMRequest, LLMResponse
 from app.services.ai_service import AIService
 from app.services.base import BaseService
@@ -102,13 +102,13 @@ class ConversationService(BaseService):
             VoiceChatResponse: Standardized response containing transcript, assistant_text, audio, and latencies.
 
         Raises:
-            BadRequestError: If neither prompt nor audio_bytes is provided.
+            ValueError: If neither prompt nor audio_bytes is provided.
         """
         if request is None:
-            raise BadRequestError("VoiceChatRequest cannot be None.")
+            raise ValueError("VoiceChatRequest cannot be None.")
 
         if not request.prompt and not request.audio_bytes:
-            raise BadRequestError(
+            raise ValueError(
                 "VoiceChatRequest must contain either a text prompt or audio_bytes payload."
             )
 
@@ -161,7 +161,7 @@ class ConversationService(BaseService):
                 audio_format = tts_response.format
                 sample_rate = tts_response.sample_rate
                 tts_latency_ms = (time.perf_counter() - start_tts) * MS_PER_SECOND
-            except InternalServerException as exc:
+            except InternalServerError as exc:
                 if exc.error_code == "TTS_KEY_MISSING":
                     logger.warning(
                         "TTS synthesis skipped during pipeline execution: TTS_API_KEY unconfigured."

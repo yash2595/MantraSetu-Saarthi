@@ -8,7 +8,7 @@ import inspect
 import logging
 from typing import Any
 
-from app.core.exceptions import BadRequestError, InternalServerException
+from app.core.exceptions import InternalServerError
 from app.services.base import BaseService
 from app.speech.models import SpeechToTextRequest, SpeechToTextResponse
 
@@ -37,20 +37,20 @@ class SpeechToTextService(BaseService):
             request: SpeechToTextRequest model to validate.
 
         Raises:
-            BadRequestError: If request is None, audio_bytes is empty, or language is empty.
+            ValueError: If request is None, audio_bytes is empty, or language is empty.
         """
         if request is None:
-            raise BadRequestError("SpeechToTextRequest cannot be None.")
+            raise ValueError("SpeechToTextRequest cannot be None.")
 
         if not request.audio_bytes:
-            raise BadRequestError("audio_bytes cannot be empty.")
+            raise ValueError("audio_bytes cannot be empty.")
 
         if (
             not request.language
             or not isinstance(request.language, str)
             or not request.language.strip()
         ):
-            raise BadRequestError("language cannot be empty.")
+            raise ValueError("language cannot be empty.")
 
     async def transcribe(
         self,
@@ -65,8 +65,8 @@ class SpeechToTextService(BaseService):
             SpeechToTextResponse: Standardized transcript response model.
 
         Raises:
-            BadRequestError: On request validation failure.
-            InternalServerException: If no provider is configured or provider execution fails.
+            ValueError: On request validation failure.
+            InternalServerError: If no provider is configured or provider execution fails.
         """
         self._validate_request(request)
 
@@ -77,7 +77,7 @@ class SpeechToTextService(BaseService):
         )
 
         if self._provider is None:
-            raise InternalServerException(
+            raise InternalServerError(
                 message="Speech-to-Text provider is not configured.",
                 error_code="STT_PROVIDER_NOT_CONFIGURED",
             )
@@ -90,7 +90,7 @@ class SpeechToTextService(BaseService):
             elif callable(self._provider):
                 result = self._provider(request)
             else:
-                raise InternalServerException(
+                raise InternalServerError(
                     message="Injected STT provider does not implement a recognized transcribe method.",
                     error_code="INVALID_STT_PROVIDER",
                 )
@@ -130,9 +130,9 @@ class SpeechToTextService(BaseService):
 
         except Exception as exc:
             logger.error("Speech-to-text transcription failed: %s", str(exc))
-            if isinstance(exc, (BadRequestError, InternalServerException)):
+            if isinstance(exc, ( InternalServerError)):
                 raise exc
-            raise InternalServerException(
+            raise InternalServerError(
                 message=f"STT provider transcription failed: {exc}",
                 error_code="STT_TRANSCRIPTION_FAILED",
             ) from exc

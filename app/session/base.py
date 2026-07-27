@@ -1,99 +1,149 @@
-"""Abstract Base Storage interface for Session Management.
+"""Abstract contracts and interfaces for the Session subsystem in MantraSetu AgentOS.
 
-Defines the contract that all session storage providers (InMemory, Redis, DB)
-must implement.
+This module defines abstract base classes for session lifecycle management, storage abstractions,
+and health monitoring alongside domain exception hierarchies.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any
+from datetime import datetime
+from typing import Mapping
+from uuid import UUID
 
-from app.session.models import SessionData, SessionMessage
+from app.core.models import ComponentHealth
+from app.session.models import SessionContext, SessionStatus, UserSession
 
 
-class BaseSessionStore(ABC):
-    """Abstract base class contract for all Session Storage providers."""
+class SessionError(Exception):
+    """Base exception for all session subsystem errors."""
+
+    pass
+
+
+class SessionResourceNotFoundError(SessionError):
+    """Raised when a requested session entity cannot be found."""
+
+    pass
+
+
+class SessionExpiredError(SessionError):
+    """Raised when an operation is attempted on an expired session."""
+
+    pass
+
+
+class SessionStorageError(SessionError):
+    """Raised when a session persistence or retrieval operation fails."""
+
+    pass
+
+
+class SessionValidationError(SessionError):
+    """Raised when session input parameter validation fails."""
+
+    pass
+
+
+class SessionInitializationError(SessionError):
+    """Raised when a session component initialization fails."""
+
+    pass
+
+
+class BaseSessionManager(ABC):
+    """Abstract interface defining the contract for user session lifecycle management."""
 
     @abstractmethod
     async def create_session(
         self,
-        session_id: str | None = None,
-        user_id: str | None = None,
-        ttl_seconds: int | None = None,
-        context: dict[str, Any] | None = None,
-    ) -> SessionData:
-        """Create and store a new session.
+        user_id: UUID | None = None,
+        metadata: Mapping[str, object] | None = None,
+        expires_at: datetime | None = None,
+    ) -> UserSession:
+        """Create and persist a new UserSession entity.
 
         Args:
-            session_id: Optional custom session ID.
-            user_id: Optional user identifier.
-            ttl_seconds: Optional TTL override in seconds.
-            context: Optional initial session context dictionary.
+            user_id: Optional user identifier UUID.
+            metadata: Optional key-value metadata mapping.
+            expires_at: Optional UTC expiration timestamp.
 
         Returns:
-            SessionData: Created session state model.
+            UserSession: Newly created UserSession model.
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
-    async def get_session(self, session_id: str) -> SessionData | None:
-        """Retrieve a session by its unique ID, returning None if expired or not found.
+    async def get_session(self, session_id: UUID) -> UserSession:
+        """Retrieve a UserSession model by identifier.
 
         Args:
-            session_id: Unique session identifier string.
+            session_id: Unique session identifier UUID.
 
         Returns:
-            SessionData | None: Active session data or None if missing/expired.
+            UserSession: Retrieved UserSession model.
+
+        Raises:
+            SessionResourceNotFoundError: If session_id is not found.
+            SessionExpiredError: If session has expired.
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
-    async def save_session(self, session: SessionData) -> None:
-        """Save or update an existing session state.
-
-        Args:
-            session: SessionData model to persist.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_session(self, session_id: str) -> bool:
-        """Delete a session by ID.
-
-        Args:
-            session_id: Unique session identifier string.
-
-        Returns:
-            bool: True if deleted, False if session did not exist.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def append_message(
+    async def update_session(
         self,
-        session_id: str,
-        message: SessionMessage,
-    ) -> SessionData:
-        """Append a message to session history.
+        session_id: UUID,
+        metadata: Mapping[str, object] | None = None,
+        status: SessionStatus | None = None,
+    ) -> UserSession:
+        """Update a UserSession entity's metadata or operational status.
 
         Args:
-            session_id: Target session ID.
-            message: SessionMessage instance to append.
+            session_id: Unique session identifier UUID.
+            metadata: Optional updated metadata mapping.
+            status: Optional updated SessionStatus enum.
 
         Returns:
-            SessionData: Updated session state model.
+            UserSession: Updated UserSession model.
+
+        Raises:
+            SessionResourceNotFoundError: If session_id is not found.
+            SessionExpiredError: If session is expired.
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
-    async def clear_expired(self) -> int:
-        """Prune all expired sessions.
+    async def close_session(self, session_id: UUID) -> UserSession:
+        """Transition a UserSession to CLOSED status.
+
+        Args:
+            session_id: Unique session identifier UUID to close.
 
         Returns:
-            int: Number of expired sessions purged.
+            UserSession: Closed UserSession model.
+
+        Raises:
+            SessionResourceNotFoundError: If session_id is not found.
         """
-        raise NotImplementedError
+        ...
 
     @abstractmethod
-    async def close(self) -> None:
-        """Release underlying storage connection resources."""
-        raise NotImplementedError
+    async def delete_session(self, session_id: UUID) -> None:
+        """Purge and delete a UserSession by identifier.
+
+        Args:
+            session_id: Unique session identifier UUID to delete.
+
+        Raises:
+            SessionResourceNotFoundError: If session_id is not found.
+        """
+        ...
+
+    @abstractmethod
+    async def health_check(self) -> ComponentHealth:
+        """Perform an operational health check on the session manager component.
+
+        Returns:
+            ComponentHealth: Operational component health status model.
+        """
+        ...

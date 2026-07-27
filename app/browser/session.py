@@ -17,7 +17,7 @@ from app.browser.base import (
     BaseBrowserSession,
     BrowserRuntimeHandle,
     BrowserSessionError,
-    SessionNotFoundError,
+    SessionResourceNotFoundError,
 )
 from app.browser.models import BrowserSession, BrowserSessionStatus
 
@@ -203,13 +203,13 @@ class BrowserSessionManager(BaseBrowserSession):
             session_id: Unique session identifier UUID to close.
 
         Raises:
-            SessionNotFoundError: If the session ID is not registered.
+            SessionResourceNotFoundError: If the session ID is not registered.
             BrowserSessionError: If manager is uninitialized or cleanup fails.
         """
         self._ensure_initialized()
         async with self._lock:
             if session_id not in self._sessions:
-                raise SessionNotFoundError(f"Session {session_id} does not exist.")
+                raise SessionResourceNotFoundError(f"Session {session_id} does not exist.")
 
             try:
                 runtime = self._runtimes.pop(session_id, None)

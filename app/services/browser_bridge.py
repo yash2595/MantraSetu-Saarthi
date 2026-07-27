@@ -9,7 +9,7 @@ import logging
 
 from pydantic import BaseModel, Field
 
-from app.core.exceptions import BadRequestError
+
 from app.services.action_engine import ActionStep, ExecutionPlan
 from app.services.base import BaseService
 
@@ -175,13 +175,13 @@ class BrowserBridge(BaseService):
             list[BrowserCommand]: Ordered list of BrowserCommand models.
 
         Raises:
-            BadRequestError: If execution_plan is None or contains no steps.
+            ValueError: If execution_plan is None or contains no steps.
         """
         if execution_plan is None:
-            raise BadRequestError("ExecutionPlan cannot be None.")
+            raise ValueError("ExecutionPlan cannot be None.")
 
         if not execution_plan.steps:
-            raise BadRequestError("ExecutionPlan steps cannot be empty.")
+            raise ValueError("ExecutionPlan steps cannot be empty.")
 
         logger.info(
             "Browser command generation started [intent=%s, steps=%d]",

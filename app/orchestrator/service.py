@@ -1,170 +1,233 @@
-"""Orchestrator Subsystem Service Facade for MantraSetu AgentOS.
+"""Orchestrator Application Service Facade for MantraSetu AgentOS.
 
-This module provides OrchestratorService as the primary public entry point for the Orchestrator subsystem,
-coordinating workflow planning via BasePlanner, state tracking via OrchestratorStateManager, and plan execution
-via BaseExecutor without executing domain actions directly.
+This module implements OrchestratorService as the main application facade for the Orchestrator
+subsystem, coordinating intent detection, execution routing, downstream service execution,
+and context persistence via injected subsystem dependencies.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
+from app.core.models import ComponentHealth, SystemHealthStatus
 from app.orchestrator.base import (
-    BaseExecutor,
-    BaseOrchestrator,
-    BasePlanner,
-    ExecutionError,
+    OrchestrationExecutionError,
+    OrchestratorError,
+    OrchestratorInitializationError,
 )
+from app.orchestrator.executor import ExecutionManager
+from app.orchestrator.intent import IntentDetectionService
 from app.orchestrator.models import (
-    ExecutionContext,
-    ExecutionPlan,
-    ExecutionRequest,
-    ExecutionResult,
+    OrchestratorContext,
+    OrchestratorResponse,
+    UserRequest,
 )
-from app.orchestrator.state import OrchestratorStateManager
+from app.orchestrator.router import RouterService
+from app.orchestrator.store import OrchestratorStore
 
 
-class OrchestratorService(BaseOrchestrator):
-    """Public facade service implementing BaseOrchestrator contract.
+class OrchestratorService:
+    """Application facade service coordinating the complete Orchestrator subsystem pipeline.
 
     Responsibility:
-        Coordinates end-to-end task execution workflow by validating requests, delegating planning
-        to BasePlanner, persisting runtime context via OrchestratorStateManager, and executing plans
-        via BaseExecutor. Guarantees state cleanup on both success and error conditions.
+        Accepts UserRequest models, creates OrchestratorContext snapshots, classifies user
+        intent, resolves execution routes, delegates downstream execution, persists enriched
+        context via OrchestratorStore, and returns OrchestratorResponse without LLM SDK
+        or browser execution dependencies.
+
+    Pipeline:
+        UserRequest
+            → Create OrchestratorContext
+            → IntentDetectionService.detect()
+            → RouterService.route()
+            → ExecutionManager.execute()
+            → OrchestratorStore.save()
+            → OrchestratorResponse
     """
 
     def __init__(
         self,
-        planner: BasePlanner,
-        executor: BaseExecutor,
-        state_manager: OrchestratorStateManager,
+        intent_service: IntentDetectionService,
+        router_service: RouterService,
+        execution_manager: ExecutionManager,
+        store: OrchestratorStore,
     ) -> None:
-        """Initialize OrchestratorService with injected planner, executor, and state manager.
+        """Initialize OrchestratorService with strictly injected subsystem dependencies.
 
         Args:
-            planner: BasePlanner instance generating execution plans.
-            executor: BaseExecutor instance executing workflow plans.
-            state_manager: OrchestratorStateManager instance tracking runtime execution context.
+            intent_service: Injected IntentDetectionService instance.
+            router_service: Injected RouterService instance.
+            execution_manager: Injected ExecutionManager instance for downstream coordination.
+            store: Injected OrchestratorStore instance for context persistence.
         """
-        self._planner = planner
-        self._executor = executor
-        self._state_manager = state_manager
+        self._intent_service = intent_service
+        self._router_service = router_service
+        self._execution_manager = execution_manager
+        self._store = store
         self._initialized = False
 
     def _require_initialized(self) -> None:
         """Verify that the orchestrator service has been initialized.
 
         Raises:
-            ExecutionError: If service is uninitialized.
+            OrchestratorInitializationError: If initialize() has not been called.
         """
         if not self._initialized:
-            raise ExecutionError(
+            raise OrchestratorInitializationError(
                 "OrchestratorService is not initialized. Call initialize() first."
             )
 
     async def initialize(self) -> None:
-        """Initialize the orchestrator service runtime state."""
+        """Initialize orchestrator service and all underlying subsystem dependencies. Idempotent."""
+        if self._initialized:
+            return
+
+        await self._store.initialize()
+        await self._intent_service.initialize()
+        await self._router_service.initialize()
+        await self._execution_manager.initialize()
+
         self._initialized = True
 
     async def close(self) -> None:
-        """Close the orchestrator service and clear all active runtime state contexts."""
-        await self._state_manager.clear()
+        """Close orchestrator service and release all subsystem resources in reverse order."""
+        await self._execution_manager.close()
+        await self._router_service.close()
+        await self._intent_service.close()
+        await self._store.close()
+
         self._initialized = False
 
-    async def health_check(self) -> bool:
-        """Check operational health of the orchestrator service.
+    async def process(self, request: UserRequest) -> OrchestratorResponse:
+        """Execute the full orchestration pipeline for an incoming UserRequest.
 
-        Returns:
-            bool: True if initialized, False otherwise.
-        """
-        return self._initialized
-
-    async def cancel(self, plan_id: UUID) -> None:
-        """Cancel ongoing execution of a running plan.
-
-        Args:
-            plan_id: Unique plan identifier UUID to cancel.
-
-        Raises:
-            ExecutionError: If service is uninitialized.
-        """
-        self._require_initialized()
-        await self._executor.cancel(plan_id)
-
-    async def execute(self, request: ExecutionRequest) -> ExecutionResult:
-        """Process an ExecutionRequest from plan generation to completion.
-
-        Flow:
-            1. Validate request
-            2. Generate plan via planner
-            3. Store runtime context via state_manager
-            4. Execute plan via executor
-            5. Always purge runtime context in finally block
-            6. Return ExecutionResult
+        Pipeline Stages:
+            1. Validate UserRequest.
+            2. Create base OrchestratorContext.
+            3. Detect user intent via IntentDetectionService.
+            4. Resolve execution route via RouterService.
+            5. Execute resolved route via ExecutionManager.
+            6. Persist enriched OrchestratorContext via OrchestratorStore.
+            7. Return OrchestratorResponse from downstream execution.
 
         Args:
-            request: ExecutionRequest model payload specifying task goal.
+            request: Incoming UserRequest model to orchestrate.
 
         Returns:
-            ExecutionResult: Final outcome result model.
+            OrchestratorResponse: Final orchestration response model.
 
         Raises:
-            ExecutionError: If validation, planning, or step execution fails.
+            OrchestratorInitializationError: If service is uninitialized.
+            OrchestratorError: If request is invalid or any pipeline stage fails.
         """
         self._require_initialized()
-        self._validate_request(request)
-
-        plan = await self._planner.plan(request)
-        context = self._create_context(plan)
-        await self._state_manager.store(context)
+        if not isinstance(request, UserRequest):
+            raise OrchestratorError("Invalid UserRequest instance provided.")
+        if not request.user_input or not request.user_input.strip():
+            raise OrchestratorError("UserRequest user_input string cannot be empty or blank.")
 
         try:
-            result = await self._executor.execute(plan)
-            return result
-        finally:
-            await self._cleanup(plan.plan_id)
+            # Stage 1: Create base context
+            context = OrchestratorContext(
+                request_id=request.request_id,
+                session_id=request.session_id,
+            )
 
-    # ------------------------------------------------------------------
-    # Private Helper Methods
-    # ------------------------------------------------------------------
+            # Stage 2: Detect intent
+            detected_intent = await self._intent_service.detect(request)
 
-    def _validate_request(self, request: ExecutionRequest) -> None:
-        """Validate input ExecutionRequest parameters.
+            # Stage 3: Enrich context with detected intent
+            context = OrchestratorContext(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                detected_intent=detected_intent,
+            )
+
+            # Stage 4: Resolve execution route
+            route = await self._router_service.route(detected_intent, context)
+
+            # Stage 5: Enrich context with resolved route
+            final_context = OrchestratorContext(
+                request_id=request.request_id,
+                session_id=request.session_id,
+                detected_intent=detected_intent,
+                route=route,
+                metadata={
+                    "user_input": request.user_input,
+                    "intent_type": detected_intent.intent_type.value,
+                    "confidence": detected_intent.confidence,
+                    "services": list(route.services),
+                },
+            )
+
+            # Stage 6: Execute resolved route via downstream manager
+            response = await self._execution_manager.execute(route, final_context)
+
+            # Stage 7: Persist final context
+            await self._store.save(final_context)
+
+            return response
+
+        except OrchestratorError:
+            raise
+        except Exception as e:
+            raise OrchestrationExecutionError(
+                f"Orchestration pipeline failed for request '{request.request_id}': {str(e)}"
+            ) from e
+
+    async def get_context(self, request_id: UUID) -> OrchestratorContext:
+        """Retrieve the persisted OrchestratorContext for a processed request.
 
         Args:
-            request: ExecutionRequest model.
-
-        Raises:
-            ExecutionError: If request is None or missing goal.
-        """
-        if not request:
-            raise ExecutionError("ExecutionRequest cannot be None.")
-
-        if not request.goal or not request.goal.strip():
-            raise ExecutionError("ExecutionRequest goal cannot be empty or blank.")
-
-    def _create_context(self, plan: ExecutionPlan) -> ExecutionContext:
-        """Construct an initial ExecutionContext model for a generated plan.
-
-        Args:
-            plan: ExecutionPlan model.
+            request_id: Associated UserRequest identifier UUID.
 
         Returns:
-            ExecutionContext: Initial runtime context model.
+            OrchestratorContext: Retrieved orchestrator context model.
+
+        Raises:
+            OrchestratorInitializationError: If service is uninitialized.
+            OrchestratorError: If request_id is invalid or context not found.
         """
-        return ExecutionContext(
-            plan_id=plan.plan_id,
-            shared_variables={},
+        self._require_initialized()
+        if not isinstance(request_id, UUID):
+            raise OrchestratorError("Invalid request_id UUID provided.")
+
+        try:
+            return await self._store.get(request_id)
+        except OrchestratorError:
+            raise
+        except Exception as e:
+            raise OrchestratorError(
+                f"Failed to retrieve OrchestratorContext for request '{request_id}': {str(e)}"
+            ) from e
+
+    async def health_check(self) -> ComponentHealth:
+        """Check aggregated operational health across all Orchestrator subsystem services.
+
+        Returns:
+            ComponentHealth: Aggregated component health status model.
+        """
+        if not self._initialized:
+            return ComponentHealth(
+                component_name="orchestrator_service",
+                status=SystemHealthStatus.UNHEALTHY,
+                message="OrchestratorService uninitialized.",
+            )
+
+        store_health = await self._store.health_check()
+        intent_health = await self._intent_service.health_check()
+        router_health = await self._router_service.health_check()
+        exec_health = await self._execution_manager.health_check()
+
+        is_healthy = all(
+            isinstance(h, ComponentHealth) and h.status == SystemHealthStatus.HEALTHY
+            for h in (store_health, intent_health, router_health, exec_health)
         )
 
-    async def _cleanup(self, plan_id: UUID) -> None:
-        """Purge stored runtime context for a finished or failed plan.
-
-        Args:
-            plan_id: Plan identifier UUID.
-        """
-        try:
-            if await self._state_manager.contains(plan_id):
-                await self._state_manager.remove(plan_id)
-        except Exception:
-            pass
+        return ComponentHealth(
+            component_name="orchestrator_service",
+            status=SystemHealthStatus.HEALTHY if is_healthy else SystemHealthStatus.UNHEALTHY,
+            message="OrchestratorService operational."
+            if is_healthy
+            else "OrchestratorService subsystem component degraded.",
+        )

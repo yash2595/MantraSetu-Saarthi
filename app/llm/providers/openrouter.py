@@ -13,12 +13,11 @@ from typing import Any
 import httpx
 
 from app.core.exceptions import (
-    BadRequestError,
-    ConflictError,
-    ForbiddenError,
-    InternalServerException,
-    NotFoundError,
-    UnauthorizedError,
+    ConfigurationError,
+    ExternalServiceError,
+    InternalServerError,
+    RateLimitError,
+    TimeoutError,
     ValidationError,
 )
 from app.llm.base import BaseLLMProvider
@@ -49,27 +48,27 @@ def _raise_for_http_status(exc: httpx.HTTPStatusError) -> None:
     details = {"status_code": status_code, "response": response_text}
 
     if status_code == 400:
-        raise BadRequestError(
+        raise ValidationError(
             message=f"OpenRouter bad request (400): {response_text}",
             details=details,
         ) from exc
     elif status_code == 401:
-        raise UnauthorizedError(
+        raise ExternalServiceError(
             message=f"OpenRouter unauthorized (401): {response_text}",
             details=details,
         ) from exc
     elif status_code == 403:
-        raise ForbiddenError(
+        raise ExternalServiceError(
             message=f"OpenRouter forbidden (403): {response_text}",
             details=details,
         ) from exc
     elif status_code == 404:
-        raise NotFoundError(
+        raise ExternalServiceError(
             message=f"OpenRouter resource or model not found (404): {response_text}",
             details=details,
         ) from exc
     elif status_code == 409:
-        raise ConflictError(
+        raise ExternalServiceError(
             message=f"OpenRouter conflict (409): {response_text}",
             details=details,
         ) from exc
@@ -79,7 +78,7 @@ def _raise_for_http_status(exc: httpx.HTTPStatusError) -> None:
             details=details,
         ) from exc
     else:
-        raise InternalServerException(
+        raise InternalServerError(
             message=f"OpenRouter non-retryable HTTP error ({status_code}): {response_text}",
             error_code="PROVIDER_HTTP_ERROR",
             details=details,
@@ -188,16 +187,16 @@ class OpenRouterProvider(BaseLLMProvider):
             request: LLMRequest to validate.
 
         Raises:
-            BadRequestError: If request is invalid, or both prompt and messages are empty.
+            ValidationError: If request is invalid, or both prompt and messages are empty.
         """
         if request is None:
-            raise BadRequestError("LLMRequest cannot be None.")
+            raise ValidationError("LLMRequest cannot be None.")
 
         has_prompt = bool(request.prompt and request.prompt.strip())
         has_messages = bool(request.messages and isinstance(request.messages, list))
 
         if not has_prompt and not has_messages:
-            raise BadRequestError(
+            raise ValidationError(
                 "LLMRequest must contain either a non-empty prompt or a messages list."
             )
 
@@ -232,9 +231,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 elif hasattr(msg, "model_dump"):
                     serialized_messages.append(msg.model_dump())
                 else:
-                    raise BadRequestError(
-                        f"Unsupported message type in LLMRequest.messages: {type(msg).__name__}"
-                    )
+                    raise ValueError(f"Unsupported message type in LLMRequest.messages: {type(msg).__name__}")
             messages = serialized_messages
         else:
             if request.system_prompt and request.system_prompt.strip():
@@ -299,24 +296,24 @@ class OpenRouterProvider(BaseLLMProvider):
             LLMResponse: Standardized response model.
 
         Raises:
-            InternalServerException: On malformed response.
+            InternalServerError: On malformed response.
         """
         if not isinstance(response_data, dict):
-            raise InternalServerException(
+            raise InternalServerError(
                 message="OpenRouter response payload must be a JSON dictionary.",
                 error_code="INVALID_PROVIDER_RESPONSE",
             )
 
         choices = response_data.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise InternalServerException(
+            raise InternalServerError(
                 message="OpenRouter response contains no choice items.",
                 error_code="INVALID_PROVIDER_RESPONSE",
             )
 
         first_choice = choices[0]
         if not isinstance(first_choice, dict):
-            raise InternalServerException(
+            raise InternalServerError(
                 message="OpenRouter choice object is invalid.",
                 error_code="INVALID_PROVIDER_RESPONSE",
             )
@@ -350,7 +347,7 @@ class OpenRouterProvider(BaseLLMProvider):
             dict[str, Any]: Parsed JSON response.
 
         Raises:
-            InternalServerException: If all retries fail.
+            InternalServerError: If all retries fail.
         """
         max_attempts = max(1, self._settings.max_retries + 1)
         backoff = self._settings.retry_backoff_seconds
@@ -437,7 +434,7 @@ class OpenRouterProvider(BaseLLMProvider):
             duration_ms,
             str(last_error),
         )
-        raise InternalServerException(
+        raise InternalServerError(
             message=f"OpenRouter request failed after {max_attempts} attempts: {last_error}",
             error_code="PROVIDER_REQUEST_FAILED",
         ) from last_error
@@ -453,8 +450,8 @@ class OpenRouterProvider(BaseLLMProvider):
             LLMResponse: Standardized response model with provider populated.
 
         Raises:
-            BadRequestError: On request validation failure.
-            InternalServerException: On API failure.
+            ValueError: On request validation failure.
+            InternalServerError: On API failure.
         """
         self._validate_request(request)
 
@@ -477,8 +474,8 @@ class OpenRouterProvider(BaseLLMProvider):
             str: Incremental text chunk from the model.
 
         Raises:
-            BadRequestError: On request validation failure.
-            InternalServerException: On streaming failure.
+            ValueError: On request validation failure.
+            InternalServerError: On streaming failure.
         """
         self._validate_request(request)
 
@@ -537,7 +534,7 @@ class OpenRouterProvider(BaseLLMProvider):
 
         except (httpx.HTTPStatusError, httpx.RequestError, httpx.TimeoutException) as exc:
             logger.error("OpenRouter stream failed: %s", str(exc))
-            raise InternalServerException(
+            raise InternalServerError(
                 message=f"OpenRouter streaming failed: {exc}",
                 error_code="PROVIDER_STREAMING_FAILED",
             ) from exc

@@ -6,7 +6,7 @@ Acts as the application service layer bridging API requests and LLM providers vi
 import logging
 from collections.abc import AsyncGenerator
 
-from app.core.exceptions import BadRequestError
+
 from app.llm.base import BaseLLMProvider
 from app.llm.factory import LLMProviderFactory
 from app.llm.models import HealthStatus, LLMRequest, LLMResponse
@@ -56,7 +56,7 @@ class AIService(BaseService):
             str: Normalized provider name string.
 
         Raises:
-            BadRequestError: If resolved provider name is empty.
+            ValueError: If resolved provider name is empty.
         """
         resolved_name = (
             provider_name.strip().lower()
@@ -65,7 +65,7 @@ class AIService(BaseService):
         )
 
         if not resolved_name:
-            raise BadRequestError("Provider name cannot be empty.")
+            raise ValueError("Provider name cannot be empty.")
 
         return resolved_name
 

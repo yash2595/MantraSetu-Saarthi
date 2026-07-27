@@ -1,22 +1,21 @@
 """AI Provider Registry for MantraSetu AgentOS.
 
-This module provides thread-safe registration, resolution, unregistration, and diagnostic
-health checking of AI provider implementations without creating instances or executing inference commands.
+This module provides thread-safe registration, resolution, removal, and listing
+of AI provider implementations without performing inference commands or provider creation.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from app.ai.base import AIProviderError, BaseAIProvider
 
 
 class AIProviderRegistry:
-    """Thread-safe registry for registering and resolving AI provider implementations.
+    """Thread-safe registry storing and resolving BaseAIProvider instances.
 
     Responsibility:
-        Stores and resolves BaseAIProvider instances by string keys.
+        Manages the lifecycle storage of active BaseAIProvider instances by string name.
         Does not instantiate providers, parse environment variables, or execute inference.
     """
 
@@ -25,117 +24,116 @@ class AIProviderRegistry:
         self._providers: dict[str, BaseAIProvider] = {}
         self._lock = asyncio.Lock()
 
-    def _normalize_key(self, provider_type: str) -> str:
-        """Normalize provider key representation.
+    def _normalize_name(self, name: str) -> str:
+        """Validate and normalize provider name string.
 
         Args:
-            provider_type: Provider string identifier.
+            name: Non-empty provider name string.
 
         Returns:
-            str: Normalized string key.
+            str: Normalized lower-case provider name string.
+
+        Raises:
+            AIProviderError: If provider name is empty or invalid string.
         """
-        return provider_type.lower()
+        if not isinstance(name, str) or not name.strip():
+            raise AIProviderError("Provider name cannot be empty or invalid string.")
+        return name.strip().lower()
 
     async def register(
         self,
-        provider_type: str,
+        name: str,
         provider: BaseAIProvider,
     ) -> None:
-        """Register a BaseAIProvider instance for a provider key.
+        """Register a BaseAIProvider instance for a provider name.
 
         Args:
-            provider_type: Provider string identifier.
-            provider: BaseAIProvider instance to register.
+            name: Non-empty provider string identifier.
+            provider: Valid BaseAIProvider instance to register.
 
         Raises:
-            AIProviderError: If the provider key is already registered.
+            AIProviderError: If name is empty, provider instance is invalid, or name is already registered.
         """
-        key = self._normalize_key(provider_type)
+        key = self._normalize_name(name)
+        if not isinstance(provider, BaseAIProvider):
+            raise AIProviderError(
+                f"Provider instance for '{name}' must implement BaseAIProvider abstraction."
+            )
+
         async with self._lock:
             if key in self._providers:
-                raise AIProviderError(f"AI provider '{provider_type}' is already registered.")
+                raise AIProviderError(f"AI provider '{name}' is already registered in registry.")
             self._providers[key] = provider
 
-    async def unregister(self, provider_type: str) -> None:
-        """Unregister a provider instance by provider key.
+    async def remove(self, name: str) -> None:
+        """Remove a registered provider instance by provider name.
 
         Args:
-            provider_type: Provider string identifier.
+            name: Provider string identifier to remove.
 
         Raises:
-            AIProviderError: If the provider key is not found.
+            AIProviderError: If provider name is empty or not registered.
         """
-        key = self._normalize_key(provider_type)
+        key = self._normalize_name(name)
         async with self._lock:
             if key not in self._providers:
-                raise AIProviderError(f"AI provider '{provider_type}' is not registered.")
+                raise AIProviderError(f"AI provider '{name}' is not registered in registry.")
             del self._providers[key]
 
-    async def get(self, provider_type: str) -> BaseAIProvider:
-        """Resolve a registered BaseAIProvider instance by provider key.
+    async def unregister(self, name: str) -> None:
+        """Alias for remove() method for backward compatibility.
 
         Args:
-            provider_type: Provider string identifier.
+            name: Provider string identifier to remove.
+        """
+        await self.remove(name)
+
+    async def get(self, name: str) -> BaseAIProvider:
+        """Resolve a registered BaseAIProvider instance by provider name.
+
+        Args:
+            name: Provider string identifier to retrieve.
 
         Returns:
             BaseAIProvider: Registered provider instance.
 
         Raises:
-            AIProviderError: If the provider key is not found.
+            AIProviderError: If provider name is empty or not registered.
         """
-        key = self._normalize_key(provider_type)
+        key = self._normalize_name(name)
         async with self._lock:
             provider = self._providers.get(key)
             if not provider:
-                raise AIProviderError(f"AI provider '{provider_type}' is not registered.")
+                raise AIProviderError(f"AI provider '{name}' is not registered in registry.")
             return provider
 
-    async def contains(self, provider_type: str) -> bool:
-        """Check if a provider key is registered in the registry.
+    async def contains(self, name: str) -> bool:
+        """Check if a provider name is registered in the registry.
 
         Args:
-            provider_type: Provider string identifier.
+            name: Provider string identifier to check.
 
         Returns:
             bool: True if registered, False otherwise.
         """
-        key = self._normalize_key(provider_type)
+        try:
+            key = self._normalize_name(name)
+        except AIProviderError:
+            return False
+
         async with self._lock:
             return key in self._providers
 
     async def list_providers(self) -> tuple[str, ...]:
-        """List all registered provider keys.
+        """List all registered provider names in alphabetical order.
 
         Returns:
-            tuple[str, ...]: Immutable tuple of registered provider keys.
+            tuple[str, ...]: Immutable tuple of registered provider names.
         """
         async with self._lock:
-            return tuple(self._providers.keys())
+            return tuple(sorted(self._providers.keys()))
 
     async def clear(self) -> None:
         """Clear all registered provider instances from the registry."""
         async with self._lock:
             self._providers.clear()
-
-    async def health_check(self) -> dict[str, object]:
-        """Run health check probes across all registered provider instances.
-
-        Returns:
-            dict[str, object]: Dictionary mapping provider key strings to status dictionaries.
-        """
-        async with self._lock:
-            providers_snapshot = list(self._providers.items())
-
-        results: dict[str, object] = {}
-        for key, provider in providers_snapshot:
-            try:
-                status = await provider.health_check()
-                results[key] = status
-            except Exception as e:
-                results[key] = {
-                    "healthy": False,
-                    "provider": key,
-                    "message": f"Health probe failed: {str(e)}",
-                }
-
-        return results

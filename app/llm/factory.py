@@ -18,7 +18,7 @@ class ProviderAlreadyRegisteredError(AppException):
         )
 
 
-class ProviderNotFoundError(AppException):
+class ProviderResourceNotFoundError(AppException):
     """Raised when requesting a provider name that has not been registered."""
 
     def __init__(self, provider_name: str) -> None:
@@ -80,11 +80,11 @@ class LLMProviderFactory:
             type[BaseLLMProvider]: Registered provider class.
 
         Raises:
-            ProviderNotFoundError: If provider name is not registered.
+            ProviderResourceNotFoundError: If provider name is not registered.
         """
         normalized_name = name.strip().lower()
         if normalized_name not in self._registry:
-            raise ProviderNotFoundError(normalized_name)
+            raise ProviderResourceNotFoundError(normalized_name)
 
         return self._registry[normalized_name]
 
