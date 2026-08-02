@@ -41,6 +41,39 @@ class PromptManager(BasePromptManager):
     def get_pandit_prompt(self, version: str | None = None, **variables: Any) -> str:
         return self._resolve("pandit", version, **variables)
 
+    def resolve_prompt(self, request: Any, context: Any = None) -> str:
+        """Resolve the appropriate prompt text from request and context without orchestrator business logic."""
+        metadata = getattr(request, "metadata", None) or {}
+        prompt_name = metadata.get("prompt_name")
+        if not (isinstance(prompt_name, str) and prompt_name.strip()):
+            if context is not None and getattr(context, "intent", None) is not None:
+                prompt_name = context.intent.name.strip().lower()
+            else:
+                prompt_name = "system"
+        else:
+            prompt_name = prompt_name.strip().lower()
+
+        prompt_version = metadata.get("prompt_version")
+        variables: dict[str, Any] = {
+            "message": getattr(request, "message", ""),
+            "stream": getattr(request, "stream", False),
+            "language": getattr(request, "language", "") or "",
+        }
+        if context is not None:
+            variables["conversation_id"] = getattr(context, "conversation_id", "")
+            variables["user_id"] = getattr(context, "user_id", "") or ""
+            variables["locale"] = getattr(context, "locale", "")
+            variables["timezone"] = getattr(context, "timezone", "") or ""
+
+        if prompt_name == "navigation":
+            return self.get_navigation_prompt(version=prompt_version, **variables)
+        if prompt_name == "booking":
+            return self.get_booking_prompt(version=prompt_version, **variables)
+        if prompt_name == "pandit":
+            return self.get_pandit_prompt(version=prompt_version, **variables)
+        return self.get_system_prompt(version=prompt_version, **variables)
+
+
     def _resolve(self, name: str, version: str | None, **variables: Any) -> str:
         resolved_version = version or self._get_latest_version(name)
         prompt = self._load_prompt(name, resolved_version)

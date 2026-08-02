@@ -6,6 +6,15 @@ text-to-speech synthesis, and voice system health status via ConversationService
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    InternalServerException,
+    NotFoundError,
+    UnauthorizedError,
+    ValidationError,
+)
 from app.dependencies.providers import get_conversation_service
 from app.services.conversation_service import ConversationService
 from app.speech.models import (
@@ -22,6 +31,36 @@ router = APIRouter(
 )
 
 
+def _raise_http_exception(exc: Exception) -> None:
+    """Map application exceptions to appropriate HTTP responses."""
+
+    if isinstance(exc, BadRequestError):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if isinstance(exc, UnauthorizedError):
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    if isinstance(exc, ForbiddenError):
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if isinstance(exc, NotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if isinstance(exc, ConflictError):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if isinstance(exc, ValidationError):
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if isinstance(exc, InternalServerException):
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    raise HTTPException(
+        status_code=500,
+        detail="Unexpected internal server error.",
+    ) from exc
+
+
 @router.post(
     "/transcribe",
     response_model=SpeechToTextResponse,
@@ -31,25 +70,11 @@ async def transcribe_speech(
     request: SpeechToTextRequest,
     conversation_service: ConversationService = Depends(get_conversation_service),
 ) -> SpeechToTextResponse:
-    """Transcribe raw audio bytes into a textual transcript.
-
-    Args:
-        request: SpeechToTextRequest model.
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        SpeechToTextResponse: Transcribed textual output model.
-
-    Raises:
-        HTTPException: On internal processing failure.
-    """
+    """Transcribe raw audio bytes into text."""
     try:
         return await conversation_service.speech_to_text(request)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc),
-        ) from exc
+        _raise_http_exception(exc)
 
 
 @router.post(
@@ -61,81 +86,38 @@ async def generate_chat_response(
     request: VoiceChatRequest,
     conversation_service: ConversationService = Depends(get_conversation_service),
 ) -> VoiceChatResponse:
-    """Execute end-to-end voice conversation pipeline (STT -> LLM -> TTS).
-
-    Args:
-        request: VoiceChatRequest model containing prompt or audio_bytes.
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        VoiceChatResponse: Standardized response with transcript, assistant_text, audio, and latencies.
-
-    Raises:
-        HTTPException: On internal processing failure.
-    """
+    """Execute complete voice conversation pipeline."""
     try:
         return await conversation_service.process_voice_chat(request)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc),
-        ) from exc
+        _raise_http_exception(exc)
 
 
 @router.post(
     "/synthesize",
     response_model=TextToSpeechResponse,
-    summary="Synthesize text to audio speech",
+    summary="Synthesize text into speech",
 )
 async def synthesize_speech(
     request: TextToSpeechRequest,
     conversation_service: ConversationService = Depends(get_conversation_service),
 ) -> TextToSpeechResponse:
-    """Synthesize input text into raw audio binary payload.
-
-    Args:
-        request: TextToSpeechRequest model.
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        TextToSpeechResponse: Synthesized audio response model.
-
-    Raises:
-        HTTPException: On internal processing failure.
-    """
+    """Convert text into synthesized speech."""
     try:
         return await conversation_service.text_to_speech(request)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc),
-        ) from exc
+        _raise_http_exception(exc)
 
 
 @router.get(
     "/health",
-    response_model=dict[str, bool],
     summary="Check voice pipeline health status",
 )
 async def get_voice_health(
     conversation_service: ConversationService = Depends(get_conversation_service),
-) -> dict[str, bool]:
-    """Check the health status of all voice pipeline services.
-
-    Args:
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        dict[str, bool]: Dictionary indicating healthy status.
-
-    Raises:
-        HTTPException: On health check processing failure.
-    """
+):
+    """Return health information for the voice pipeline."""
     try:
-        is_healthy = await conversation_service.health_check()
-        return {"healthy": is_healthy}
+        return await conversation_service.health_check()
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc),
-        ) from exc
+        _raise_http_exception(exc)

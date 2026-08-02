@@ -1,4 +1,6 @@
-"""Sarvam AI Speech-to-Text Provider implementation module."""
+"""Sarvam Speech-to-Text Provider implementation."""
+
+from __future__ import annotations
 
 import logging
 
@@ -9,23 +11,26 @@ logger = logging.getLogger(__name__)
 
 
 class SarvamProvider(BaseSpeechToTextProvider):
-    """Sarvam AI Speech-to-Text provider adapter implementation."""
+    """Speech-to-Text provider implementation for Sarvam AI."""
 
-    def __init__(self, api_key: str | None = None) -> None:
-        """Initialize the SarvamProvider instance.
+    def __init__(
+        self,
+        api_key: str | None = None,
+    ) -> None:
+        """Initialize the Sarvam provider.
 
         Args:
-            api_key: Optional API key string for authenticating with Sarvam AI API.
+            api_key: Optional API key reserved for future Sarvam integrations.
         """
         self._api_key = api_key
         logger.info("SarvamProvider initialized")
 
     @property
     def provider_name(self) -> str:
-        """Return provider unique string identifier.
+        """Return the unique provider identifier.
 
         Returns:
-            str: Provider name string 'sarvam'.
+            Unique provider name.
         """
         return "sarvam"
 
@@ -33,28 +38,31 @@ class SarvamProvider(BaseSpeechToTextProvider):
         self,
         request: SpeechToTextRequest,
     ) -> SpeechToTextResponse:
-        """Transcribe an audio request using Sarvam AI API.
+        """Convert audio into text using the Sarvam provider.
 
         Args:
-            request: SpeechToTextRequest payload.
+            request: Standard speech-to-text request.
 
         Returns:
-            SpeechToTextResponse: Transcribed output model.
+            SpeechToTextResponse: Standardized transcription response.
 
         Raises:
-            NotImplementedError: Always raised until external Sarvam SDK integration.
+            NotImplementedError: Sarvam integration has not yet been implemented.
         """
-        raise NotImplementedError("Sarvam transcription is not implemented.")
+        raise NotImplementedError(
+            "Sarvam transcription is not implemented."
+        )
 
     async def health_check(self) -> bool:
-        """Check operational health status of Sarvam AI provider.
+        """Check the operational health of the Sarvam provider.
 
         Returns:
-            bool: Always returns True.
+            True indicating the provider is available.
         """
-        logger.info("SarvamProvider health check completed successfully")
+        logger.info("SarvamProvider health check completed successfully.")
         return True
 
     async def close(self) -> None:
-        """Gracefully release Sarvam AI provider resources."""
+        """Release Sarvam provider resources."""
         logger.info("SarvamProvider closed")
+        

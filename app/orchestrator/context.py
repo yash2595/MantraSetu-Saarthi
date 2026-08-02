@@ -43,6 +43,12 @@ class OrchestratorDependencies:
     llm_client: LLMClient
     output_parser: StructuredOutputParser
     routing_policy: RoutingPolicy
+    session_manager: Any | None = None
+    context_manager: Any | None = None
+    intent_engine: Any | None = None
+    planner: Any | None = None
+    execution_engine: Any | None = None
+    response_formatter: Any | None = None
     memory_gateway: MemoryGateway | None = None
     rag_gateway: RAGGateway | None = None
     planner_gateway: PlannerGateway | None = None

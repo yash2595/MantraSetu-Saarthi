@@ -137,15 +137,108 @@ class BaseOrchestrator(ABC):
         self,
         request: UserRequest,
     ) -> OrchestratorResponse:
-        """Execute the complete orchestration pipeline for an incoming UserRequest.
-
-        Args:
-            request: Incoming UserRequest model to orchestrate.
-
-        Returns:
-            OrchestratorResponse: Final orchestration response model.
-
-        Raises:
-            OrchestrationExecutionError: If orchestration pipeline execution fails.
-        """
+        """Execute the complete orchestration pipeline for an incoming UserRequest."""
         ...
+
+
+class ConversationContextLoader(ABC):
+    """Abstract context loader interface for chat requests."""
+
+    @abstractmethod
+    async def load(self, conversation_id: str, **kwargs: Any) -> Any:
+        ...
+
+    @abstractmethod
+    async def save(self, context: Any, **kwargs: Any) -> None:
+        ...
+
+
+class LLMClient(ABC):
+    """Abstract LLM client interface."""
+
+    @abstractmethod
+    async def generate(self, request: Any, **kwargs: Any) -> Any:
+        ...
+
+
+class PromptProvider(ABC):
+    """Abstract prompt provider interface."""
+
+    @abstractmethod
+    def get_system_prompt(self, version: str | None = None, **variables: Any) -> str:
+        ...
+
+    @abstractmethod
+    def get_navigation_prompt(self, version: str | None = None, **variables: Any) -> str:
+        ...
+
+    @abstractmethod
+    def get_booking_prompt(self, version: str | None = None, **variables: Any) -> str:
+        ...
+
+    @abstractmethod
+    def get_pandit_prompt(self, version: str | None = None, **variables: Any) -> str:
+        ...
+
+
+class StructuredOutputParser(ABC):
+    """Abstract output parser interface."""
+
+    @abstractmethod
+    def parse_ai_response(self, raw_output: str, **kwargs: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def parse_chat_response(self, raw_output: str, **kwargs: Any) -> Any:
+        ...
+
+
+class RoutingPolicy(ABC):
+    """Abstract routing policy interface."""
+
+    @abstractmethod
+    def requires_rag(self, intent: Any, ai_response: Any, **kwargs: Any) -> bool:
+        ...
+
+    @abstractmethod
+    def requires_tool_call(self, intent: Any, ai_response: Any, **kwargs: Any) -> bool:
+        ...
+
+    @abstractmethod
+    def requires_navigation(self, intent: Any, navigation_state: Any, **kwargs: Any) -> bool:
+        ...
+
+    @abstractmethod
+    def requires_planner(self, intent: Any, ai_response: Any, **kwargs: Any) -> bool:
+        ...
+
+
+class MemoryGateway(ABC):
+    """Abstract memory gateway interface placeholder."""
+    pass
+
+
+class RAGGateway(ABC):
+    """Abstract RAG gateway interface placeholder."""
+    pass
+
+
+class PlannerGateway(ABC):
+    """Abstract planner gateway interface placeholder."""
+    pass
+
+
+class NavigationGateway(ABC):
+    """Abstract navigation gateway interface placeholder."""
+    pass
+
+
+class ToolRegistry(ABC):
+    """Abstract tool registry interface placeholder."""
+    pass
+
+
+class ToolGateway(ABC):
+    """Abstract tool gateway interface placeholder."""
+    pass
+

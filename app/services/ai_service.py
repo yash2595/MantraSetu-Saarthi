@@ -6,9 +6,9 @@ Acts as the application service layer bridging API requests and LLM providers vi
 import logging
 from collections.abc import AsyncGenerator
 
-
+from app.core.exceptions import BadRequestError
 from app.llm.base import BaseLLMProvider
-from app.llm.factory import LLMProviderFactory
+from app.llm.factory import LLMProviderFactory, llm_factory
 from app.llm.models import HealthStatus, LLMRequest, LLMResponse
 from app.llm.settings import llm_settings
 from app.services.base import BaseService
@@ -34,11 +34,11 @@ class AIService(BaseService):
             factory: Optional LLMProviderFactory instance for dependency injection.
             default_provider_name: Optional default provider name string.
         """
-        self._factory: LLMProviderFactory = factory or LLMProviderFactory()
+        self._factory: LLMProviderFactory = factory or llm_factory
+
         self._default_provider_name: str = (
             default_provider_name or llm_settings.provider
         ).strip().lower()
-        self._provider_instances: dict[str, BaseLLMProvider] = {}
 
         logger.info(
             "AIService initialized [default_provider=%s]",
@@ -56,7 +56,7 @@ class AIService(BaseService):
             str: Normalized provider name string.
 
         Raises:
-            ValueError: If resolved provider name is empty.
+            BadRequestError: If resolved provider name is empty.
         """
         resolved_name = (
             provider_name.strip().lower()
@@ -65,27 +65,24 @@ class AIService(BaseService):
         )
 
         if not resolved_name:
-            raise ValueError("Provider name cannot be empty.")
+            raise BadRequestError("Provider name cannot be empty.")
 
         return resolved_name
 
-    def _get_provider(self, provider_name: str | None = None) -> BaseLLMProvider:
-        """Retrieve or instantiate an LLM provider from the provider factory.
+    def _get_provider(
+        self,
+        provider_name: str | None = None,
+    ) -> BaseLLMProvider:
+        """Retrieve provider instance from the factory."""
 
-        Args:
-            provider_name: Target provider name identifier string.
-
-        Returns:
-            BaseLLMProvider: Active LLM provider instance.
-        """
         target_name = self._validate_provider(provider_name)
 
-        if target_name not in self._provider_instances:
-            logger.info("Provider selected [provider=%s]", target_name)
-            provider_cls = self._factory.get(target_name)
-            self._provider_instances[target_name] = provider_cls()
+        logger.info(
+            "Provider selected [provider=%s]",
+            target_name,
+        )
 
-        return self._provider_instances[target_name]
+        return self._factory.get(target_name)
 
     # Public Async Interface Methods
     async def generate(
@@ -149,11 +146,15 @@ class AIService(BaseService):
         provider = self._get_provider(provider_name)
         return await provider.health_check()
 
+    
     async def close(self) -> None:
-        """Gracefully close all managed active provider instances and release resources."""
-        for provider_name, provider in list(self._provider_instances.items()):
-            if hasattr(provider, "close") and callable(provider.close):
-                await provider.close()
-            logger.info("Provider closed [provider=%s]", provider_name)
+        """Close provider resources if managed by the factory."""
+        provider = self._get_provider()
 
-        self._provider_instances.clear()
+        if hasattr(provider, "close") and callable(provider.close):
+            await provider.close()
+
+        logger.info(
+            "Provider closed [provider=%s]",
+            provider.provider_name,
+        )

@@ -1,8 +1,6 @@
-"""Text-to-Speech Orchestration Service module.
+"""Text-to-Speech orchestration service."""
 
-Acts as an application service layer delegating speech synthesis operations
-to an injected BaseTextToSpeechProvider adapter.
-"""
+from __future__ import annotations
 
 from app.services.base import BaseService
 from app.tts.base import BaseTextToSpeechProvider
@@ -10,13 +8,16 @@ from app.tts.models import TextToSpeechRequest, TextToSpeechResponse
 
 
 class TextToSpeechService(BaseService):
-    """Application service for orchestrating Text-to-Speech synthesis operations."""
+    """Application service for Text-to-Speech operations."""
 
-    def __init__(self, provider: BaseTextToSpeechProvider) -> None:
-        """Initialize TextToSpeechService with an injected TTS provider adapter.
+    def __init__(
+        self,
+        provider: BaseTextToSpeechProvider,
+    ) -> None:
+        """Initialize the Text-to-Speech service.
 
         Args:
-            provider: Injected BaseTextToSpeechProvider instance.
+            provider: Injected Text-to-Speech provider implementation.
         """
         self._provider = provider
 
@@ -24,24 +25,24 @@ class TextToSpeechService(BaseService):
         self,
         request: TextToSpeechRequest,
     ) -> TextToSpeechResponse:
-        """Synthesize text into speech using the underlying provider adapter.
+        """Convert text into synthesized speech.
 
         Args:
-            request: Standardized TextToSpeechRequest model.
+            request: Standardized Text-to-Speech request.
 
         Returns:
-            TextToSpeechResponse: Standardized audio output response model.
+            Standardized Text-to-Speech response.
         """
         return await self._provider.synthesize(request)
 
     async def health_check(self) -> bool:
-        """Check operational health status of the underlying provider adapter.
+        """Check the operational health of the configured provider.
 
         Returns:
-            bool: True if provider is healthy, False otherwise.
+            True if the provider is operational, otherwise False.
         """
         return await self._provider.health_check()
 
     async def close(self) -> None:
-        """Gracefully release underlying provider resources."""
+        """Release provider resources."""
         await self._provider.close()

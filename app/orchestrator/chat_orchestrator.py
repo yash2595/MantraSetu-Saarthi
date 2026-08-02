@@ -1,179 +1,111 @@
-"""Chat orchestration for the MantraSetu backend.
+"""Backward-compatibility adapter for legacy Chat API routes.
 
-This coordinator only wires dependencies together. It does not contain any
-business rules, routing heuristics, or provider-specific logic.
+ChatOrchestrator acts strictly as a thin compatibility adapter delegating requests
+to AIOrchestrator. It contains zero orchestration, execution, or business logic.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
-from uuid import UUID
+from uuid import uuid4
 
-from app.llm.exceptions import LLMConfigurationError, LLMError
-from app.orchestrator.context import OrchestratorContext, OrchestratorDependencies, OrchestratorState
+from app.orchestrator.ai_orchestrator import AIOrchestrator
+from app.orchestrator.context import OrchestratorDependencies
 from app.orchestrator.pipeline import DEFAULT_PIPELINE, OrchestrationPipeline
-from app.schemas.chat import AIResponse, ChatRequest
-from app.schemas.context import ConversationContext
+from app.schemas.chat import AIResponse, ChatRequest, ChatResponse
+from app.schemas.interaction import InteractionRequest, InteractionResponse
 
 logger = logging.getLogger(__name__)
 
 
+from app.orchestrator.builder import AIOrchestratorBuilder
+
+
 class ChatOrchestrator:
-    """Dependency-injected coordinator for a single chat request."""
+    """Thin compatibility adapter wrapping AIOrchestrator for legacy endpoints."""
 
     def __init__(
         self,
         dependencies: OrchestratorDependencies,
         pipeline: OrchestrationPipeline | None = None,
+        ai_orchestrator: AIOrchestrator | None = None,
     ) -> None:
         self._dependencies = dependencies
         self._pipeline = pipeline or DEFAULT_PIPELINE
+        self._ai_orchestrator = ai_orchestrator or (
+            AIOrchestratorBuilder()
+            .with_dependencies(dependencies)
+            .build()
+        )
 
     @property
     def pipeline(self) -> OrchestrationPipeline:
-        """Expose the orchestration pipeline for debugging and testing."""
+        """Expose the orchestration pipeline metadata."""
         return self._pipeline
 
+    @property
+    def ai_orchestrator(self) -> AIOrchestrator:
+        """Expose the underlying AIOrchestrator instance."""
+        return self._ai_orchestrator
+
     async def handle(self, request: ChatRequest) -> AIResponse:
-        """Coordinate the request through context, prompt, and LLM layers."""
-        context = await self._load_context(request)
-        orchestrator_context = OrchestratorContext(
-            dependencies=self._dependencies,
-            state=OrchestratorState(request=request, conversation_context=context),
+        """Adapt ChatRequest to InteractionRequest, delegate to AIOrchestrator, return AIResponse."""
+        metadata = dict(request.metadata or {})
+        session_id = str(metadata.get("session_id") or request.conversation_id or "anonymous_session")
+        request_id = metadata.get("request_id") or uuid4()
+
+        interaction_request = InteractionRequest(
+            request_id=request_id if hasattr(request_id, "hex") else uuid4(),
+            session_id=session_id,
+            conversation_id=request.conversation_id,
+            user_input=request.message,
+            metadata=metadata,
         )
 
-        resolved_prompt_name = self._resolve_prompt_name(request, context)
-        resolved_prompt = self._resolve_prompt(request, context, resolved_prompt_name)
-        orchestrator_context.state.resolved_prompt = resolved_prompt
+        interaction_response: InteractionResponse = await self._ai_orchestrator.process(interaction_request)
 
-        prepared_request = self._prepare_request(request, resolved_prompt_name, resolved_prompt, context)
-        try:
-            ai_response = await self._dependencies.llm_client.generate(prepared_request)
-        except LLMConfigurationError as exc:
-            logger.warning(
-                "llm_provider_not_configured",
-                extra={
-                    "conversation_id": str(request.conversation_id) if request.conversation_id else None,
-                    "prompt_name": resolved_prompt_name,
-                    "pipeline": self._pipeline.name,
-                },
-            )
-            return AIResponse(
-                content="MantraSetu AI is configured but no LLM provider is connected yet.",
-                provider=None,
-                model=None,
-                finish_reason="provider_not_configured",
-                metadata={
-                    "intent": "general_chat",
-                    "confidence": 0.0,
-                    "prompt_name": resolved_prompt_name,
-                    "pipeline": self._pipeline.name,
-                },
-            )
-        except LLMError as exc:
-            logger.exception(
-                "llm_provider_failed",
-                extra={
-                    "conversation_id": str(request.conversation_id) if request.conversation_id else None,
-                    "prompt_name": resolved_prompt_name,
-                    "pipeline": self._pipeline.name,
-                },
-            )
-            return AIResponse(
-                content="MantraSetu AI could not process this request right now.",
-                provider=None,
-                model=None,
-                finish_reason="provider_error",
-                metadata={
-                    "intent": "general_chat",
-                    "confidence": 0.0,
-                    "error": exc.__class__.__name__,
-                    "prompt_name": resolved_prompt_name,
-                    "pipeline": self._pipeline.name,
-                },
-            )
+        return self._adapt_to_ai_response(interaction_response)
 
-        orchestrator_context.state.ai_response = ai_response
-        logger.info(
-            "chat_orchestration_completed",
-            extra={
-                "conversation_id": str(request.conversation_id) if request.conversation_id else None,
-                "prompt_name": resolved_prompt_name,
+    def _adapt_to_ai_response(self, interaction_response: InteractionResponse) -> AIResponse:
+        """Convert normalized InteractionResponse into legacy AIResponse payload."""
+        content = getattr(interaction_response, "content", None)
+        if not isinstance(content, str) or not content:
+            content = "MantraSetu AI could not process this request right now."
+
+        finish_reason = getattr(interaction_response, "finish_reason", None)
+        if not isinstance(finish_reason, str):
+            finish_reason = "stop" if getattr(interaction_response, "success", True) else "error"
+
+        metadata = getattr(interaction_response, "metadata", None)
+        meta_dict = dict(metadata) if isinstance(metadata, dict) else {}
+
+        provider = meta_dict.get("provider")
+        provider_str = str(provider) if isinstance(provider, str) else None
+
+        model = meta_dict.get("model")
+        model_str = str(model) if isinstance(model, str) else None
+
+        intent_obj = getattr(interaction_response, "intent", None)
+        intent_name = getattr(intent_obj, "name", "general_chat") if intent_obj else "general_chat"
+        intent_str = str(intent_name) if isinstance(intent_name, str) else "general_chat"
+
+        confidence = getattr(intent_obj, "confidence", 0.0) if intent_obj else 0.0
+        conf_float = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+
+        exec_time = getattr(interaction_response, "execution_time_ms", 0.0)
+        exec_time_float = float(exec_time) if isinstance(exec_time, (int, float)) else 0.0
+
+        return AIResponse(
+            content=content,
+            provider=provider_str,
+            model=model_str,
+            finish_reason=finish_reason,
+            metadata={
+                "intent": intent_str,
+                "confidence": conf_float,
                 "pipeline": self._pipeline.name,
+                "execution_time_ms": exec_time_float,
+                **meta_dict,
             },
         )
-        return ai_response
-
-    async def _load_context(self, request: ChatRequest) -> ConversationContext | None:
-        """Load conversation state when a context loader is available."""
-        loader = self._dependencies.context_loader
-        if request.conversation_id is None:
-            return request.context
-
-        if loader is None:
-            return request.context
-
-        loaded = await loader.load(str(request.conversation_id), request=request)
-        return loaded or request.context
-
-    def _resolve_prompt_name(self, request: ChatRequest, context: ConversationContext | None) -> str:
-        """Choose a prompt name from request metadata or the active context."""
-        metadata = request.metadata or {}
-        prompt_name = metadata.get("prompt_name")
-        if isinstance(prompt_name, str) and prompt_name.strip():
-            return prompt_name.strip().lower()
-
-        if context is not None and context.intent is not None:
-            return context.intent.name.strip().lower()
-
-        return "system"
-
-    def _resolve_prompt(self, request: ChatRequest, context: ConversationContext | None, prompt_name: str) -> str:
-        """Resolve the prompt text through the injected prompt provider."""
-        prompt_provider = self._dependencies.prompt_provider
-        prompt_version = (request.metadata or {}).get("prompt_version")
-        prompt_variables = self._build_prompt_variables(request, context)
-
-        if prompt_name == "navigation":
-            return prompt_provider.get_navigation_prompt(version=prompt_version, **prompt_variables)
-        if prompt_name == "booking":
-            return prompt_provider.get_booking_prompt(version=prompt_version, **prompt_variables)
-        if prompt_name == "pandit":
-            return prompt_provider.get_pandit_prompt(version=prompt_version, **prompt_variables)
-        return prompt_provider.get_system_prompt(version=prompt_version, **prompt_variables)
-
-    def _build_prompt_variables(self, request: ChatRequest, context: ConversationContext | None) -> dict[str, Any]:
-        """Build prompt variables without embedding business rules."""
-        variables: dict[str, Any] = {
-            "message": request.message,
-            "stream": request.stream,
-            "language": request.language or "",
-        }
-        if context is not None:
-            variables["conversation_id"] = context.conversation_id
-            variables["user_id"] = context.user_id or ""
-            variables["locale"] = context.locale
-            variables["timezone"] = context.timezone or ""
-        return variables
-
-    def _prepare_request(
-        self,
-        request: ChatRequest,
-        prompt_name: str,
-        resolved_prompt: str,
-        context: ConversationContext | None,
-    ) -> ChatRequest:
-        """Return a request copy with orchestration metadata attached."""
-        metadata = dict(request.metadata or {})
-        metadata.update(
-            {
-                "prompt_name": prompt_name,
-                "resolved_prompt": resolved_prompt,
-                "pipeline": self._pipeline.name,
-            }
-        )
-        if context is not None:
-            metadata["loaded_context"] = context.model_dump(mode="json")
-
-        return request.model_copy(update={"metadata": metadata, "context": context or request.context})

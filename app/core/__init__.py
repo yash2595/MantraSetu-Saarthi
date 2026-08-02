@@ -1,88 +1,38 @@
-"""Core domain package for MantraSetu AgentOS."""
+"""Core application infrastructure subpackage for MantraSetu AgentOS."""
 
-from app.core.dependency import ApplicationContainer
-from app.core.exceptions import (
-    ApplicationError,
-    AuthenticationError,
-    AuthorizationError,
-    ConfigurationError,
-    ConflictError,
-    DependencyError,
-    ExternalServiceError,
-    HealthCheckError,
-    InternalServerError,
-    RateLimitError,
-    ResourceNotFoundError,
-    TimeoutError,
-    ValidationError,
-)
-from app.core.health import BaseHealthCheck, HealthAggregator
-from app.core.lifecycle import (
-    BaseLifecycleService,
-    LifecycleManager,
-    LifecycleState,
-)
-from app.core.models import (
-    ApplicationInfo,
-    BaseCoreModel,
-    ComponentHealth,
-    HealthStatus,
-    Pagination,
-    ServiceInfo,
-    SystemHealthStatus,
-    TimestampedModel,
-    VersionInfo,
-)
-from app.core.settings import (
-    AISettings,
-    APISettings,
-    ApplicationConfig,
-    ApplicationSettings,
-    BrowserSettings,
-    Environment,
-    HealthSettings,
-    RAGSettings,
-    ServerSettings,
-    load_settings,
-)
+from app.core.app import create_app
+from app.core.bootstrap import ApplicationBootstrap, BootstrapReport, bootstrap_application, shutdown_application
+from app.core.config import get_settings, settings, Settings
+from app.core.container import ApplicationContainer, Scope
+from app.core.exceptions import ApplicationError, ConfigurationError, DependencyError
+from app.core.lifecycle import BaseLifecycleService, LifecycleManager, LifecycleState
+from app.core.logging import configure_logging
+from app.core.registry import get_runtime_registry, reset_runtime_registry, RuntimeRegistry
+from app.core.shutdown import GracefulShutdownManager
+from app.core.validation import StartupValidationError, StartupValidator
 
 __all__ = [
-    "BaseCoreModel",
-    "TimestampedModel",
-    "SystemHealthStatus",
-    "VersionInfo",
-    "ComponentHealth",
-    "HealthStatus",
-    "ApplicationInfo",
-    "ServiceInfo",
-    "Pagination",
-    "ApplicationError",
-    "ConfigurationError",
-    "ValidationError",
-    "AuthenticationError",
-    "AuthorizationError",
-    "ResourceNotFoundError",
-    "ConflictError",
-    "RateLimitError",
-    "ExternalServiceError",
-    "TimeoutError",
-    "HealthCheckError",
-    "DependencyError",
-    "InternalServerError",
-    "BaseHealthCheck",
-    "HealthAggregator",
-    "Environment",
-    "ApplicationConfig",
-    "ServerSettings",
-    "AISettings",
-    "RAGSettings",
-    "BrowserSettings",
-    "APISettings",
-    "HealthSettings",
-    "ApplicationSettings",
-    "load_settings",
+    "ApplicationBootstrap",
     "ApplicationContainer",
-    "LifecycleState",
+    "ApplicationError",
     "BaseLifecycleService",
+    "BootstrapReport",
+    "ConfigurationError",
+    "DependencyError",
+    "GracefulShutdownManager",
     "LifecycleManager",
+    "LifecycleState",
+    "RuntimeRegistry",
+    "Scope",
+    "Settings",
+    "StartupValidationError",
+    "StartupValidator",
+    "bootstrap_application",
+    "configure_logging",
+    "create_app",
+    "get_runtime_registry",
+    "get_settings",
+    "reset_runtime_registry",
+    "settings",
+    "shutdown_application",
 ]

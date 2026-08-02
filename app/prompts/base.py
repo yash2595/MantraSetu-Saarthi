@@ -51,3 +51,8 @@ class BasePromptManager(ABC):
     @abstractmethod
     def get_pandit_prompt(self, version: str | None = None, **variables: Any) -> str:
         """Return the resolved pandit prompt text."""
+
+    def resolve_prompt(self, request: Any, context: Any = None) -> str:
+        """Return resolved prompt text from request and context."""
+        return self.get_system_prompt()
+

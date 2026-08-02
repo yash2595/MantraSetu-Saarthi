@@ -53,7 +53,6 @@ class PassThroughStructuredOutputParser(StructuredOutputParser):
         raw_output: str,
         **kwargs: Any,
     ) -> AIResponse:
-
         return AIResponse(
             content=raw_output,
         )
@@ -63,9 +62,38 @@ class PassThroughStructuredOutputParser(StructuredOutputParser):
         raw_output: str,
         **kwargs: Any,
     ) -> ChatResponse:
-
         return ChatResponse(
             assistant_message=raw_output,
+        )
+
+    def format_ai_response(
+        self,
+        content: str,
+        provider: str | None = None,
+        model: str | None = None,
+        finish_reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> AIResponse:
+        return AIResponse(
+            content=content,
+            provider=provider,
+            model=model,
+            finish_reason=finish_reason,
+            metadata=metadata or {},
+        )
+
+    def format_error_response(
+        self,
+        error_message: str,
+        finish_reason: str = "error",
+        metadata: dict[str, Any] | None = None,
+    ) -> AIResponse:
+        return AIResponse(
+            content=error_message,
+            provider=None,
+            model=None,
+            finish_reason=finish_reason,
+            metadata=metadata or {},
         )
 
 
@@ -105,36 +133,35 @@ class DefaultRoutingPolicy(RoutingPolicy):
         return False
 
 
-def build_chat_orchestrator() -> ChatOrchestrator:
-    """
-    Build the default dependency graph.
-    """
+from app.orchestrator.ai_orchestrator import AIOrchestrator
+from app.orchestrator.builder import AIOrchestratorBuilder
 
+
+def build_ai_orchestrator() -> AIOrchestrator:
+    """Build the primary AIOrchestrator instance with default dependency graph via builder."""
+    parser = PassThroughStructuredOutputParser()
     dependencies = OrchestratorDependencies(
-
         context_loader=NoopConversationContextLoader(),
-
         prompt_provider=PromptManager(),
-
         llm_client=OpenRouterProvider(),
-
-        output_parser=PassThroughStructuredOutputParser(),
-
+        output_parser=parser,
         routing_policy=DefaultRoutingPolicy(),
-
+        response_formatter=parser,
         memory_gateway=None,
-
         rag_gateway=None,
-
         planner_gateway=None,
-
         navigation_gateway=None,
-
         tool_registry=None,
-
         tool_gateway=None,
     )
 
+    return AIOrchestratorBuilder().with_dependencies(dependencies).build()
+
+
+def build_chat_orchestrator() -> ChatOrchestrator:
+    """Build legacy ChatOrchestrator compatibility wrapper over AIOrchestrator."""
+    ai_orch = build_ai_orchestrator()
     return ChatOrchestrator(
-        dependencies=dependencies,
+        dependencies=ai_orch.dependencies,
+        ai_orchestrator=ai_orch,
     )

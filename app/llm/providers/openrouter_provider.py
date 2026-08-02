@@ -1,4 +1,4 @@
-"""OpenRouter provider module alias for backwards compatibility."""
+"""OpenRouter provider package exports."""
 
 from app.llm.providers.openrouter import OpenRouterProvider
 

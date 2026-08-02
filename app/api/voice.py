@@ -1,16 +1,23 @@
-"""Voice REST API router module.
+"""Voice REST API router module."""
 
-Provides HTTP endpoints for speech-to-text transcription, AI chat generation,
-text-to-speech synthesis, and voice system health status via ConversationService.
-"""
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.dependencies.providers import get_conversation_service
 from app.llm.models import LLMRequest, LLMResponse
 from app.services.conversation_service import ConversationService
 from app.speech.models import SpeechToTextRequest, SpeechToTextResponse
 from app.tts.models import TextToSpeechRequest, TextToSpeechResponse
+
+
+class HealthResponse(BaseModel):
+    """Voice pipeline health response."""
+
+    healthy: bool
+
 
 router = APIRouter(
     prefix="/voice",
@@ -21,29 +28,21 @@ router = APIRouter(
 @router.post(
     "/transcribe",
     response_model=SpeechToTextResponse,
-    summary="Transcribe audio payload to text",
+    status_code=status.HTTP_200_OK,
+    summary="Transcribe speech into text",
 )
-async def transcribe_speech(
+async def transcribe(
     request: SpeechToTextRequest,
-    conversation_service: ConversationService = Depends(get_conversation_service),
+    conversation_service: ConversationService = Depends(
+        get_conversation_service,
+    ),
 ) -> SpeechToTextResponse:
-    """Transcribe raw audio bytes into a textual transcript.
-
-    Args:
-        request: SpeechToTextRequest model.
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        SpeechToTextResponse: Transcribed textual output model.
-
-    Raises:
-        HTTPException: On internal processing failure.
-    """
+    """Transcribe speech into text."""
     try:
         return await conversation_service.speech_to_text(request)
     except Exception as exc:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
 
@@ -51,29 +50,21 @@ async def transcribe_speech(
 @router.post(
     "/chat",
     response_model=LLMResponse,
-    summary="Generate AI response completion",
+    status_code=status.HTTP_200_OK,
+    summary="Generate AI response",
 )
-async def generate_chat_response(
+async def chat(
     request: LLMRequest,
-    conversation_service: ConversationService = Depends(get_conversation_service),
+    conversation_service: ConversationService = Depends(
+        get_conversation_service,
+    ),
 ) -> LLMResponse:
-    """Generate an AI text response completion from an LLM request.
-
-    Args:
-        request: LLMRequest model.
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        LLMResponse: Standardized AI completion response model.
-
-    Raises:
-        HTTPException: On internal processing failure.
-    """
+    """Generate an AI response."""
     try:
         return await conversation_service.generate_response(request)
     except Exception as exc:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
 
@@ -81,57 +72,43 @@ async def generate_chat_response(
 @router.post(
     "/synthesize",
     response_model=TextToSpeechResponse,
-    summary="Synthesize text to audio speech",
+    status_code=status.HTTP_200_OK,
+    summary="Synthesize speech from text",
 )
-async def synthesize_speech(
+async def synthesize(
     request: TextToSpeechRequest,
-    conversation_service: ConversationService = Depends(get_conversation_service),
+    conversation_service: ConversationService = Depends(
+        get_conversation_service,
+    ),
 ) -> TextToSpeechResponse:
-    """Synthesize input text into raw audio binary payload.
-
-    Args:
-        request: TextToSpeechRequest model.
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        TextToSpeechResponse: Synthesized audio response model.
-
-    Raises:
-        HTTPException: On internal processing failure.
-    """
+    """Convert text into synthesized speech."""
     try:
         return await conversation_service.text_to_speech(request)
     except Exception as exc:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
 
 
 @router.get(
     "/health",
-    response_model=dict[str, bool],
-    summary="Check voice pipeline health status",
+    response_model=HealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Check voice pipeline health",
 )
-async def get_voice_health(
-    conversation_service: ConversationService = Depends(get_conversation_service),
-) -> dict[str, bool]:
-    """Check the health status of all voice pipeline services.
-
-    Args:
-        conversation_service: Injected ConversationService dependency.
-
-    Returns:
-        dict[str, bool]: Dictionary indicating healthy status.
-
-    Raises:
-        HTTPException: On health check processing failure.
-    """
+async def health(
+    conversation_service: ConversationService = Depends(
+        get_conversation_service,
+    ),
+) -> HealthResponse:
+    """Check the health of the voice pipeline."""
     try:
-        is_healthy = await conversation_service.health_check()
-        return {"healthy": is_healthy}
+        return HealthResponse(
+            healthy=await conversation_service.health_check(),
+        )
     except Exception as exc:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
