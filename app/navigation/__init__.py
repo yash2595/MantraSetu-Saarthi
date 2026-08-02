@@ -43,6 +43,32 @@ from app.navigation.execution_telemetry import ExecutionTelemetryEngine
 from app.navigation.executor import DirectiveAction, NavigationDirective as LegacyNavigationDirective, NavigationExecutor
 from app.navigation.graph import NavigationGraph
 from app.navigation.intent_mapper import IntentMapper, IntentRouteResolution
+from app.navigation.journey_analytics import NavigationJourneyAnalytics
+from app.navigation.journey_graph import JourneyEdge, NavigationJourneyGraph
+from app.navigation.journey_models import (
+    AcknowledgementState,
+    EventAcknowledgement,
+    FrontendEventType,
+    JourneyCheckpoint,
+    NavigationEventPriority,
+    NavigationJourney,
+    NavigationTransition,
+    PredictedRoute,
+    ReplayMode,
+    TransitionStatus,
+    UITransitionChain,
+    UserBehaviourProfile,
+)
+from app.navigation.journey_persistence import (
+    FileProvider,
+    InMemoryProvider,
+    JourneyPersistenceProvider,
+    MongoProvider,
+    PostgreSQLProvider,
+    RedisProvider,
+)
+from app.navigation.journey_store import NavigationJourneyStore
+from app.navigation.journey_timeline import NavigationHistoryTimeline
 from app.navigation.knowledge_graph import NavigationKnowledgeGraph
 from app.navigation.models import (
     ActionType,
@@ -158,6 +184,30 @@ __all__ = [
     "NavigationExecutor",
     "LegacyNavigationDirective",
     "DirectiveAction",
+    # Enterprise Navigation Journey Intelligence v4.1 Entities & Engines
+    "TransitionStatus",
+    "FrontendEventType",
+    "NavigationEventPriority",
+    "ReplayMode",
+    "AcknowledgementState",
+    "PredictedRoute",
+    "UITransitionChain",
+    "EventAcknowledgement",
+    "NavigationTransition",
+    "JourneyCheckpoint",
+    "UserBehaviourProfile",
+    "NavigationJourney",
+    "JourneyPersistenceProvider",
+    "InMemoryProvider",
+    "FileProvider",
+    "RedisProvider",
+    "PostgreSQLProvider",
+    "MongoProvider",
+    "JourneyEdge",
+    "NavigationJourneyGraph",
+    "NavigationHistoryTimeline",
+    "NavigationJourneyStore",
+    "NavigationJourneyAnalytics",
     # Intelligence Layer v4.1 Entities & Engines
     "NavigationPolicyEngine",
     "PolicyOutcome",

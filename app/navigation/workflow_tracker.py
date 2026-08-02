@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
+from app.navigation.journey_models import JourneyCheckpoint
 from app.navigation.state_store import NavigationStateStore
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,9 @@ class WorkflowContext:
     workflow_data: dict[str, Any] = field(default_factory=dict)
     is_completed: bool = False
     is_cancelled: bool = False
+    is_interrupted: bool = False
+    interruption_reason: str | None = None
+    checkpoint: JourneyCheckpoint | None = None
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -38,6 +42,9 @@ class WorkflowContext:
             "workflow_data": dict(self.workflow_data),
             "is_completed": self.is_completed,
             "is_cancelled": self.is_cancelled,
+            "is_interrupted": self.is_interrupted,
+            "interruption_reason": self.interruption_reason,
+            "checkpoint": self.checkpoint.to_dict() if self.checkpoint else None,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
         }
@@ -89,6 +96,8 @@ class WorkflowTracker:
 
             ctx.current_step = next_step
             ctx.step_index += 1
+            ctx.is_interrupted = False
+            ctx.interruption_reason = None
             if step_data:
                 ctx.workflow_data.update(step_data)
 
@@ -104,6 +113,37 @@ class WorkflowTracker:
         """Get current active workflow for session."""
         with self._lock:
             return self._active_workflows.get(session_id)
+
+    def mark_interrupted(
+        self,
+        session_id: str,
+        reason: str = "NAVIGATION_MISMATCH",
+        checkpoint: JourneyCheckpoint | None = None,
+    ) -> WorkflowContext | None:
+        """Mark active workflow as interrupted and save a resume checkpoint."""
+        with self._lock:
+            ctx = self._active_workflows.get(session_id)
+            if ctx and not ctx.is_completed and not ctx.is_cancelled:
+                ctx.is_interrupted = True
+                ctx.interruption_reason = reason
+                ctx.checkpoint = checkpoint
+                ctx.updated_at = datetime.now(timezone.utc).isoformat()
+                logger.info("Workflow '%s' marked as INTERRUPTED for session '%s' [Reason: %s]", ctx.workflow_name, session_id, reason)
+                return ctx
+            return None
+
+    def resume_workflow(self, session_id: str) -> WorkflowContext | None:
+        """Resume an interrupted workflow for a session."""
+        with self._lock:
+            ctx = self._active_workflows.get(session_id)
+            if ctx and ctx.is_interrupted:
+                ctx.is_interrupted = False
+                ctx.interruption_reason = None
+                ctx.updated_at = datetime.now(timezone.utc).isoformat()
+                self._store.update_workflow(session_id, ctx.workflow_name, ctx.current_step)
+                logger.info("Workflow '%s' RESUMED for session '%s' at step '%s'", ctx.workflow_name, session_id, ctx.current_step)
+                return ctx
+            return ctx
 
     def cancel_workflow(self, session_id: str) -> None:
         """Cancel active workflow for session."""

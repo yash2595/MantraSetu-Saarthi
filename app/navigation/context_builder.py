@@ -1,4 +1,4 @@
-"""Dynamic Navigation Context Builder for MantraSetu AgentOS."""
+"""Dynamic Navigation Context Builder for MantraSetu AgentOS v4.1."""
 
 from __future__ import annotations
 
@@ -8,9 +8,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.navigation.context_cache import ContextCache
-from app.navigation.conversation_memory import ConversationMemoryManager, ConversationMemorySnapshot
+from app.navigation.conversation_memory import (
+    ConversationMemoryManager,
+    ConversationMemorySnapshot,
+)
+from app.navigation.journey_store import NavigationJourneyStore
 from app.navigation.registry import RouteRegistry
-from app.navigation.state_store import NavigationStateStore, NavigationSessionState
+from app.navigation.state_store import NavigationSessionState, NavigationStateStore
 from app.navigation.ui_registry import UIRegistry
 from app.navigation.workflow_tracker import WorkflowTracker
 
@@ -41,6 +45,24 @@ class AINavigationContext:
     ui_elements: list[dict[str, Any]] = field(default_factory=list)
     memory_summary: dict[str, Any] = field(default_factory=dict)
 
+    # Enterprise Journey Subsystem Extensions (v4.1)
+    journey_summary_text: str = ""
+    navigation_pattern: list[str] = field(default_factory=list)
+    recent_navigation_behaviour: dict[str, Any] = field(default_factory=dict)
+    predicted_next_page: str | None = None
+    workflow_completion_percentage: float = 0.0
+    last_transition_reason: str | None = None
+    current_navigation_depth: int = 1
+    recent_ui_actions: list[dict[str, Any]] = field(default_factory=list)
+    current_journey_summary: dict[str, Any] = field(default_factory=dict)
+    journey_timeline: list[dict[str, Any]] = field(default_factory=list)
+    journey_graph_summary: dict[str, Any] = field(default_factory=dict)
+    navigation_frequency: dict[str, int] = field(default_factory=dict)
+    recent_transitions: list[dict[str, Any]] = field(default_factory=list)
+    last_successful_navigation: str | None = None
+    last_failed_navigation: str | None = None
+    resume_point: dict[str, Any] | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert context snapshot into serializable dictionary."""
         return {
@@ -63,11 +85,27 @@ class AINavigationContext:
             "page_metadata": dict(self.page_metadata),
             "ui_elements": list(self.ui_elements),
             "memory_summary": dict(self.memory_summary),
+            "journey_summary_text": self.journey_summary_text,
+            "navigation_pattern": list(self.navigation_pattern),
+            "recent_navigation_behaviour": dict(self.recent_navigation_behaviour),
+            "predicted_next_page": self.predicted_next_page,
+            "workflow_completion_percentage": self.workflow_completion_percentage,
+            "last_transition_reason": self.last_transition_reason,
+            "current_navigation_depth": self.current_navigation_depth,
+            "recent_ui_actions": list(self.recent_ui_actions),
+            "current_journey_summary": dict(self.current_journey_summary),
+            "journey_timeline": list(self.journey_timeline),
+            "journey_graph_summary": dict(self.journey_graph_summary),
+            "navigation_frequency": dict(self.navigation_frequency),
+            "recent_transitions": list(self.recent_transitions),
+            "last_successful_navigation": self.last_successful_navigation,
+            "last_failed_navigation": self.last_failed_navigation,
+            "resume_point": dict(self.resume_point) if self.resume_point else None,
         }
 
 
 class NavigationContextBuilder:
-    """Builder generating dynamic navigation context snapshots from 5 foundation stores without owning state."""
+    """Builder generating dynamic navigation context snapshots from foundation stores and Journey subsystem."""
 
     def __init__(
         self,
@@ -77,6 +115,7 @@ class NavigationContextBuilder:
         memory_manager: ConversationMemoryManager | None = None,
         ui_registry: UIRegistry | None = None,
         context_cache: ContextCache | None = None,
+        journey_store: NavigationJourneyStore | None = None,
     ) -> None:
         self._state_store = state_store or NavigationStateStore()
         self._registry = registry or RouteRegistry()
@@ -84,10 +123,11 @@ class NavigationContextBuilder:
         self._memory_manager = memory_manager or ConversationMemoryManager()
         self._ui_registry = ui_registry or UIRegistry()
         self._context_cache = context_cache or ContextCache(version="4.1")
+        self._journey_store = journey_store or NavigationJourneyStore()
         self._lock = threading.RLock()
 
     def build_context(self, session_id: str, conversation_id: str = "") -> AINavigationContext:
-        """Dynamically assemble runtime AINavigationContext snapshot using all 5 foundation sources."""
+        """Dynamically assemble runtime AINavigationContext snapshot using all foundation sources and Journey subsystem."""
         with self._lock:
             # 1. Fetch Session State from NavigationStateStore
             session_state: NavigationSessionState = self._state_store.get_state(session_id)
@@ -137,6 +177,44 @@ class NavigationContextBuilder:
                 for elem in ui_elems_raw
             ]
 
+            # 6. Fetch Journey Subsystem Context
+            journey = self._journey_store.get_journey(session_id)
+            graph = self._journey_store.get_graph(session_id)
+            timeline = self._journey_store.get_timeline(session_id)
+
+            # Predictions
+            probable_next = graph.get_probable_next_destinations(current_page, limit=1)
+            predicted_next_page = probable_next[0].route if probable_next else None
+
+            # Transitions
+            recent_t_objects = timeline.get_all_transitions()[-5:]
+            recent_transitions = [t.to_dict() for t in recent_t_objects]
+
+            last_succ_t = timeline.get_last_successful_transition()
+            last_fail_t = timeline.get_last_failed_transition()
+
+            last_succ_page = last_succ_t.current_page if last_succ_t else session_state.last_successful_page
+            last_fail_page = last_fail_t.current_page if last_fail_t else session_state.last_failed_navigation
+
+            checkpoint = journey.resume_checkpoint or (wf.checkpoint if wf else None)
+            resume_point_dict = checkpoint.to_dict() if checkpoint else None
+
+            # Deterministic LLM Summary Text Generation
+            path_str = " → ".join(session_state.navigation_history[-5:])
+            if active_wf:
+                if wf and wf.is_interrupted:
+                    summary_text = (
+                        f"User navigated {path_str}. Workflow '{active_wf}' interrupted "
+                        f"during step '{active_wf_step}'. Resume checkpoint available."
+                    )
+                else:
+                    summary_text = (
+                        f"User navigated {path_str}. Active workflow '{active_wf}' "
+                        f"at step '{active_wf_step}'."
+                    )
+            else:
+                summary_text = f"User navigated {path_str}."
+
             context = AINavigationContext(
                 session_id=session_id,
                 conversation_id=conv_id,
@@ -157,6 +235,23 @@ class NavigationContextBuilder:
                 page_metadata=dict(page_meta),
                 ui_elements=ui_elements,
                 memory_summary=memory_summary,
+                # Enterprise Extensions
+                journey_summary_text=summary_text,
+                navigation_pattern=session_state.navigation_history[-5:],
+                recent_navigation_behaviour={"visited_count": len(session_state.visited_pages)},
+                predicted_next_page=predicted_next_page,
+                workflow_completion_percentage=graph.predict_workflow_completion(active_wf_name or "", active_wf_step or "") if active_wf_name else 0.0,
+                last_transition_reason=recent_t_objects[-1].navigation_action if recent_t_objects else None,
+                current_navigation_depth=len(session_state.navigation_history),
+                recent_ui_actions=[{"action": t.navigation_action, "ui_element": t.triggering_ui_element} for t in recent_t_objects if t.triggering_ui_element],
+                current_journey_summary={"total_transitions": len(journey.transitions), "is_archived": journey.is_archived},
+                journey_timeline=[t.to_dict() for t in timeline.get_all_transitions()[-10:]],
+                journey_graph_summary=graph.statistics(),
+                navigation_frequency=dict(session_state.navigation_frequency),
+                recent_transitions=recent_transitions,
+                last_successful_navigation=last_succ_page,
+                last_failed_navigation=last_fail_page,
+                resume_point=resume_point_dict,
             )
 
             logger.debug("Built dynamic AINavigationContext snapshot for session '%s'", session_id)
