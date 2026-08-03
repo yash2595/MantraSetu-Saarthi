@@ -1,7 +1,6 @@
 """Abstract Base Provider interface for Speech-to-Text services.
 
-Defines the contract that all STT provider adapters (e.g. Sarvam, Whisper, Deepgram)
-must implement.
+Defines the contract that all STT provider adapters must implement.
 """
 
 from abc import ABC, abstractmethod
@@ -17,26 +16,24 @@ class BaseSpeechToTextProvider(ABC):
         self,
         request: SpeechToTextRequest,
     ) -> SpeechToTextResponse:
-        """Convert input audio payload into a standardized text response.
-
-        Args:
-            request: Standardized SpeechToTextRequest model.
-
-        Returns:
-            SpeechToTextResponse: Standardized transcript output response model.
-        """
-        raise NotImplementedError
+        """Convert input audio payload into a standardized text response."""
+        raise NotImplementedError(
+            "BaseSpeechToTextProvider.transcribe is an abstract method. "
+            "Use app.providers.ProductionSTTProviderManager for production Speech-to-Text transcription."
+        )
 
     @abstractmethod
     async def health_check(self) -> bool:
-        """Check the operational health status of the speech provider.
-
-        Returns:
-            bool: True if provider API is healthy and reachable, False otherwise.
-        """
-        raise NotImplementedError
+        """Check the operational health status of the speech provider."""
+        raise NotImplementedError(
+            "BaseSpeechToTextProvider.health_check is an abstract method. "
+            "Use app.providers.ProductionSTTProviderManager for production Speech-to-Text transcription."
+        )
 
     @abstractmethod
     async def close(self) -> None:
         """Gracefully release provider connections and underlying HTTP resources."""
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseSpeechToTextProvider.close is an abstract method. "
+            "Use app.providers.ProductionSTTProviderManager for production Speech-to-Text transcription."
+        )

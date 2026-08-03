@@ -24,14 +24,11 @@ class BaseLLMProvider(ABC):
     def provider_name(self) -> str:
         """
         Unique provider identifier.
-
-        Example:
-            openrouter
-            openai
-            gemini
-            ollama
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseLLMProvider.provider_name is an abstract property. "
+            "Use app.providers.ProductionLLMProviderManager for production LLM generation."
+        )
 
     @property
     @abstractmethod
@@ -39,7 +36,10 @@ class BaseLLMProvider(ABC):
         """
         Currently configured model identifier.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseLLMProvider.model_name is an abstract property. "
+            "Use app.providers.ProductionLLMProviderManager for production LLM generation."
+        )
 
     @property
     @abstractmethod
@@ -47,7 +47,10 @@ class BaseLLMProvider(ABC):
         """
         Models supported by this provider.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseLLMProvider.supported_models is an abstract property. "
+            "Use app.providers.ProductionLLMProviderManager for production LLM generation."
+        )
 
     @property
     def supports_streaming(self) -> bool:
@@ -78,7 +81,10 @@ class BaseLLMProvider(ABC):
         """
         Generate a complete response.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseLLMProvider.generate is an abstract method. "
+            "Use app.providers.ProductionLLMProviderManager for production LLM generation."
+        )
 
     @abstractmethod
     async def stream_generate(
@@ -87,11 +93,11 @@ class BaseLLMProvider(ABC):
     ) -> AsyncGenerator[str, None]:
         """
         Stream the generated response.
-
-        Yields:
-            Text chunks from the model.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseLLMProvider.stream_generate is an abstract method. "
+            "Use app.providers.ProductionLLMProviderManager for production LLM generation."
+        )
 
     async def stream(
         self,
@@ -99,9 +105,6 @@ class BaseLLMProvider(ABC):
     ) -> AsyncGenerator[str, None]:
         """
         Stream the generated response (alias for stream_generate).
-
-        Yields:
-            Text chunks from the model.
         """
         async for chunk in self.stream_generate(request):
             yield chunk
@@ -110,17 +113,17 @@ class BaseLLMProvider(ABC):
     async def health_check(self) -> HealthStatus:
         """
         Check provider health.
-
-        Returns:
-            HealthStatus describing provider availability.
         """
-        raise NotImplementedError
+        raise NotImplementedError(
+            "BaseLLMProvider.health_check is an abstract method. "
+            "Use app.providers.ProductionLLMProviderManager for production LLM generation."
+        )
 
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}("
-            f"provider='{self.provider_name}', "
-            f"model='{self.model_name}')"
+            f"provider='{getattr(self, 'provider_name', 'abstract')}', "
+            f"model='{getattr(self, 'model_name', 'abstract')}')"
         )
 
 

@@ -297,7 +297,7 @@ class NavigationJourneyGraph:
         return cls.from_dict(json.loads(json_str))
 
     # Diagnostics & Health
-    def statistics(() -> dict[str, Any]:
+    def statistics(self) -> dict[str, Any]:
         """Expose graph operational statistics."""
         with self._lock:
             edge_count = sum(len(targets) for targets in self._outgoing_edges.values())

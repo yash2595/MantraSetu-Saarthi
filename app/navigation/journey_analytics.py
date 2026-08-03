@@ -136,7 +136,7 @@ class NavigationJourneyAnalytics:
             "funnel_steps": funnel_steps,
         }
 
-    def workflow_completion_heatmap(() -> dict[str, Any]:
+    def workflow_completion_heatmap(self) -> dict[str, Any]:
         """Compute completion percentages across all tracked workflows."""
         all_sids = self._store._provider.list_all_sessions()
         wf_stats: dict[str, dict[str, int]] = {}

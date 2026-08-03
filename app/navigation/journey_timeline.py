@@ -45,7 +45,7 @@ class NavigationHistoryTimeline:
             # Clear redo stack on new forward transition
             self._redo_stack.clear()
 
-    def undo((self) -> str | None:
+    def undo(self) -> str | None:
         """Simulate browser back navigation in timeline."""
         with self._lock:
             if len(self._undo_stack) <= 1:

@@ -17,52 +17,26 @@ class SarvamProvider(BaseSpeechToTextProvider):
         self,
         api_key: str | None = None,
     ) -> None:
-        """Initialize the Sarvam provider.
-
-        Args:
-            api_key: Optional API key reserved for future Sarvam integrations.
-        """
+        """Initialize the Sarvam provider."""
         self._api_key = api_key
         logger.info("SarvamProvider initialized")
 
     @property
     def provider_name(self) -> str:
-        """Return the unique provider identifier.
-
-        Returns:
-            Unique provider name.
-        """
         return "sarvam"
 
     async def transcribe(
         self,
         request: SpeechToTextRequest,
     ) -> SpeechToTextResponse:
-        """Convert audio into text using the Sarvam provider.
-
-        Args:
-            request: Standard speech-to-text request.
-
-        Returns:
-            SpeechToTextResponse: Standardized transcription response.
-
-        Raises:
-            NotImplementedError: Sarvam integration has not yet been implemented.
-        """
         raise NotImplementedError(
-            "Sarvam transcription is not implemented."
+            "Sarvam legacy STT provider is deprecated. "
+            "Use app.providers.ProductionSTTProviderManager for production Sarvam STT operations."
         )
 
     async def health_check(self) -> bool:
-        """Check the operational health of the Sarvam provider.
-
-        Returns:
-            True indicating the provider is available.
-        """
         logger.info("SarvamProvider health check completed successfully.")
         return True
 
     async def close(self) -> None:
-        """Release Sarvam provider resources."""
         logger.info("SarvamProvider closed")
-        
