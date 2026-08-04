@@ -198,21 +198,36 @@ class ConversationService(BaseService):
         Returns:
             bool: True if speech, AI, and TTS services are healthy, False otherwise.
         """
-        speech_healthy = await self._speech_service.health_check()
-        ai_status = await self._ai_service.health_check()
-        ai_healthy = (
-            getattr(ai_status, "healthy", bool(ai_status))
-            if ai_status is not None
-            else False
-        )
-        tts_status = await self._tts_service.health_check()
-        tts_healthy = (
-            getattr(tts_status, "healthy", bool(tts_status))
-            if tts_status is not None
-            else False
-        )
+        try:
+            speech_healthy = await self._speech_service.health_check()
+        except Exception as exc:
+            logger.warning("SpeechService health check failed: %s", exc)
+            speech_healthy = False
+
+        try:
+            ai_status = await self._ai_service.health_check()
+            ai_healthy = (
+                getattr(ai_status, "healthy", bool(ai_status))
+                if ai_status is not None
+                else False
+            )
+        except Exception as exc:
+            logger.warning("AIService health check failed: %s", exc)
+            ai_healthy = False
+
+        try:
+            tts_status = await self._tts_service.health_check()
+            tts_healthy = (
+                getattr(tts_status, "healthy", bool(tts_status))
+                if tts_status is not None
+                else False
+            )
+        except Exception as exc:
+            logger.warning("TTSService health check failed: %s", exc)
+            tts_healthy = False
 
         return bool(speech_healthy and ai_healthy and tts_healthy)
+
 
     async def close(self) -> None:
         """Gracefully release all underlying service resources."""

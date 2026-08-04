@@ -178,6 +178,10 @@ class AIOrchestrator:
             ),
         )
 
+    async def process(self, request: OrchestratorRequest) -> OrchestratorResponse:
+        """Compatibility alias for callers and tests expecting process()."""
+        return await self.process_request(request)
+
     async def process_stream(self, request: OrchestratorRequest) -> AsyncIterator[StreamingChunk]:
         """Stream orchestration response tokens incrementally."""
         diag = self._lifecycle_manager.start_request_lifecycle(request)

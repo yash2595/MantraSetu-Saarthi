@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from app.orchestrator.ai_orchestrator import AIOrchestrator
-from app.orchestrator.defaults import build_ai_orchestrator
 from app.voice.gateway import VoiceGateway
 from app.voice.session_manager import VoiceSessionManager
 from app.voice.stt.factory import build_speech_recognizer
@@ -17,6 +16,7 @@ def build_voice_gateway(
     **stt_kwargs,
 ) -> VoiceGateway:
     """Build and return a fully configured VoiceGateway instance."""
+    from app.orchestrator.defaults import build_ai_orchestrator
     ai_orch = ai_orchestrator or build_ai_orchestrator()
     sess_mgr = session_manager or VoiceSessionManager()
     recognizer = build_speech_recognizer(provider=stt_provider, **stt_kwargs)

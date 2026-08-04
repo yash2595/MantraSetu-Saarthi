@@ -16,6 +16,7 @@ from app.tools.tool_models import (
     ToolMetadata,
     ToolParameter,
     ToolResult,
+    ToolState,
 )
 from app.tools.tool_permission_manager import ToolPermissionManager
 from app.tools.tool_policy import ToolPolicyEngine

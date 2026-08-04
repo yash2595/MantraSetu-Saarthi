@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from app.api.rest import rest_router
 from app.api.websocket import ws_router
-from app.core.bootstrap import bootstrap_application, shutdown_application
+from app.core.bootstrap import async_bootstrap_application, bootstrap_application, shutdown_application
 from app.core.config import settings
 from app.core.logging import configure_logging
 
@@ -17,7 +17,7 @@ from app.core.logging import configure_logging
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application startup, runtime bootstrap, and graceful shutdown around FastAPI's lifespan."""
-    bootstrap_application(app)
+    await async_bootstrap_application(app)
     try:
         yield
     finally:

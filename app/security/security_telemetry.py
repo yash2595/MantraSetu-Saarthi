@@ -56,7 +56,7 @@ class SecurityTelemetryEngine:
         with self._lock:
             self._threats_detected_count += 1
 
-    def record_audit_event((self) -> None:
+    def record_audit_event(self) -> None:
         """Record an audit event count."""
         with self._lock:
             self._total_audit_events += 1

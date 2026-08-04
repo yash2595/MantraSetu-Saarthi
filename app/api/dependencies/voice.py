@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from app.api.dependencies.orchestrator import get_ai_orchestrator
 from app.voice.factory import build_voice_gateway
 from app.voice.gateway import VoiceGateway
 from app.voice.session_manager import VoiceSessionManager
@@ -19,6 +18,7 @@ def get_voice_session_manager() -> VoiceSessionManager:
 
 def get_voice_gateway() -> VoiceGateway:
     """Dependency provider returning configured VoiceGateway instance."""
+    from app.api.dependencies.orchestrator import get_ai_orchestrator
     ai_orchestrator = get_ai_orchestrator()
     session_manager = get_voice_session_manager()
     return build_voice_gateway(ai_orchestrator=ai_orchestrator, session_manager=session_manager)

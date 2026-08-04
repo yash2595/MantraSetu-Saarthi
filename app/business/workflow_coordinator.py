@@ -15,6 +15,25 @@ from app.business.temple_discovery_workflow import TempleDiscoveryWorkflow
 from app.business.workflow_telemetry import WorkflowTelemetryEngine
 
 
+def _draft_to_dict(draft: Any) -> Dict[str, Any]:
+    if draft is None:
+        return {}
+    if hasattr(draft, "to_dict"):
+        return draft.to_dict()
+    return {
+        "draft_id": getattr(draft, "draft_id", None),
+        "pandit_name": getattr(draft, "pandit_name", None),
+        "phone": getattr(draft, "phone", None),
+        "city": getattr(draft, "city", None),
+        "specializations": list(getattr(draft, "specializations", []) or []),
+        "experience_years": getattr(draft, "experience_years", 0),
+        "verification_docs": list(getattr(draft, "verification_docs", []) or []),
+        "current_step": getattr(draft, "current_step", None),
+        "total_steps": getattr(draft, "total_steps", None),
+        "completed": getattr(draft, "completed", None),
+    }
+
+
 class WorkflowCoordinator:
     """Central Workflow Coordinator managing selection, state lifecycle, recovery, completion, and telemetry."""
 
@@ -46,7 +65,7 @@ class WorkflowCoordinator:
                     phone=payload.get("phone", "9876543210"),
                     city=payload.get("city", "Varanasi"),
                 )
-                res = {"workflow": "PanditOnboardingWorkflow", "draft": draft.to_dict()}
+                res = {"workflow": "PanditOnboardingWorkflow", "draft": _draft_to_dict(draft)}
 
             elif "BOOKING" in wf or "PUJA" in wf:
                 booking = self.puja_booking.initiate_booking(

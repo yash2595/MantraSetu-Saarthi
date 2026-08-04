@@ -201,15 +201,15 @@ class NavigationContextBuilder:
 
             # Deterministic LLM Summary Text Generation
             path_str = " → ".join(session_state.navigation_history[-5:])
-            if active_wf:
+            if active_wf_name:
                 if wf and wf.is_interrupted:
                     summary_text = (
-                        f"User navigated {path_str}. Workflow '{active_wf}' interrupted "
+                        f"User navigated {path_str}. Workflow '{active_wf_name}' interrupted "
                         f"during step '{active_wf_step}'. Resume checkpoint available."
                     )
                 else:
                     summary_text = (
-                        f"User navigated {path_str}. Active workflow '{active_wf}' "
+                        f"User navigated {path_str}. Active workflow '{active_wf_name}' "
                         f"at step '{active_wf_step}'."
                     )
             else:

@@ -104,7 +104,7 @@ class ToolRegistry:
             intent_clean = intent_name.upper()
             return [t for t in self._tools.values() if intent_clean in [i.upper() for i in t.supported_intents]]
 
-    def list_all_tools() -> list[ToolDefinition]:
+    def list_all_tools(self) -> list[ToolDefinition]:
         """Return defensive list of all registered tool definitions."""
         with self._lock:
             return list(self._tools.values())

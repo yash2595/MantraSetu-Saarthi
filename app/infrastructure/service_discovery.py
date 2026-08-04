@@ -9,7 +9,9 @@ from typing import Any
 
 from app.core.models import ComponentHealth, SystemHealthStatus
 from app.infrastructure.runtime_models import ServiceEndpoint, ServiceState
-from app.infrastructure.runtime_registry import ServiceRegistry if False else None  # type check marker
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.infrastructure.service_registry import ServiceRegistry
 from app.infrastructure.service_registry import ServiceRegistry
 from app.infrastructure.runtime_telemetry import RuntimeTelemetryEngine
 

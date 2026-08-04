@@ -12,6 +12,23 @@ _is_configured: bool = False
 _logging_lock = threading.Lock()
 
 
+import contextvars
+
+trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
+span_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("span_id", default=None)
+
+
+class TraceContextFilter(logging.Filter):
+    """ContextVar filter to automatically attach trace_id and span_id to log records."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "trace_id"):
+            record.trace_id = trace_id_var.get()
+        if not hasattr(record, "span_id"):
+            record.span_id = span_id_var.get()
+        return True
+
+
 class StructuredJSONFormatter(logging.Formatter):
     """Structured JSON log formatter for production telemetry."""
 
@@ -25,7 +42,7 @@ class StructuredJSONFormatter(logging.Formatter):
         }
 
         # Contextual metadata
-        for field in ("request_id", "correlation_id", "session_id", "conversation_id", "execution_time_ms"):
+        for field in ("trace_id", "span_id", "request_id", "correlation_id", "session_id", "conversation_id", "execution_time_ms"):
             val = getattr(record, field, None)
             if val is not None:
                 log_data[field] = val
@@ -60,6 +77,7 @@ def configure_logging(level: str = "INFO", json_format: bool = False, force: boo
 
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(getattr(logging, level.upper(), logging.INFO))
+        handler.addFilter(TraceContextFilter())
 
         if json_format:
             handler.setFormatter(StructuredJSONFormatter())

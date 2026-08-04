@@ -121,3 +121,6 @@ class LLMProviderFactory:
     def get_provider(cls, name: str) -> type[BaseLLMProvider]:
         """Class method convenience wrapper to retrieve a provider class."""
         return cls().get(name)
+
+
+llm_factory = LLMProviderFactory()

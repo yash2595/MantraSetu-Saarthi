@@ -224,3 +224,6 @@ class ConversationManager:
             status=SystemHealthStatus.HEALTHY,
             details=self.statistics(),
         )
+
+
+EnterpriseConversationManager = ConversationManager

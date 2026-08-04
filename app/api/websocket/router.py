@@ -127,11 +127,12 @@ async def voice_websocket_endpoint(websocket: WebSocket) -> None:
 
                 state_machine.transition_to(ConnectionState.PROCESSING, reason="processing_text_query")
 
-                resp = await voice_gateway.ai_orchestrator.process(
-                    request=InteractionRequest(
-                        conversation_id=frame.conversation_id,
+                from app.orchestrator.orchestrator_models import OrchestratorRequest
+                resp = await voice_gateway._ai_orchestrator.process_request(
+                    request=OrchestratorRequest(
+                        conversation_id=frame.conversation_id or "default_conv",
                         session_id=active_session_id,
-                        user_input=frame.payload.get("text", ""),
+                        user_message=frame.payload.get("text", ""),
                     )
                 )
 
@@ -143,8 +144,8 @@ async def voice_websocket_endpoint(websocket: WebSocket) -> None:
                     conversation_id=frame.conversation_id,
                     type=ProtocolMessageType.AI_RESPONSE,
                     payload={
-                        "content": resp.content,
-                        "intent": resp.intent.name if hasattr(resp.intent, "name") else (str(resp.intent) if resp.intent else None),
+                        "content": resp.text,
+                        "intent": resp.response_type.value if hasattr(resp, "response_type") else "chat",
                     },
                 )
                 try:

@@ -14,7 +14,6 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
-from app.api.dependencies.orchestrator import get_ai_orchestrator
 from app.api.dependencies.voice import (
     get_tts_pipeline,
     get_voice_gateway,
@@ -35,6 +34,7 @@ from app.voice.tts.voice_response_pipeline import VoiceResponsePipeline
 logger = logging.getLogger(__name__)
 
 _global_bootstrap_lock = threading.Lock()
+_bootstrap_async_lock = asyncio.Lock()
 _shutdown_async_lock = asyncio.Lock()
 
 
@@ -144,6 +144,7 @@ class ApplicationBootstrap:
                 self._container.register_instance(Settings, settings)
 
                 # Phase 4: Instantiate Runtime Services
+                from app.api.dependencies.orchestrator import get_ai_orchestrator
                 ai_orch: AIOrchestrator = get_ai_orchestrator()
                 v_session_mgr: VoiceSessionManager = get_voice_session_manager()
                 v_gw: VoiceGateway = get_voice_gateway()
@@ -207,6 +208,28 @@ class ApplicationBootstrap:
                 logger.critical("ApplicationBootstrap failed: %s", exc, exc_info=True)
 
                 # Execute deterministic reverse-order rollback
+                self._execute_rollback()
+                raise
+
+    async def initialize_async(self) -> BootstrapReport:
+        """Execute deterministic thread-safe startup phases and async OrchestratorService initialization."""
+        async with _bootstrap_async_lock:
+            if self._is_bootstrapped:
+                return self._report
+
+            # Run sync phases first
+            self.bootstrap()
+
+            try:
+                from app.dependencies.composition import get_orchestrator_service
+                orchestrator = get_orchestrator_service()
+                await orchestrator.initialize()
+                logger.info("OrchestratorService async initialization completed successfully.")
+                return self._report
+            except Exception as exc:
+                self._report.validation_status = "FAILED"
+                self._report.initialization_errors.append(f"Async Orchestrator Init Failure: {exc}")
+                logger.critical("ApplicationBootstrap async initialization failed: %s", exc, exc_info=True)
                 self._execute_rollback()
                 raise
 
@@ -277,6 +300,14 @@ def bootstrap_application(app: FastAPI | None = None) -> BootstrapReport:
         return _bootstrap_instance.report
 
 
+async def async_bootstrap_application(app: FastAPI | None = None) -> BootstrapReport:
+    """Global async entrypoint to bootstrap application runtime services including OrchestratorService."""
+    global _bootstrap_instance
+    if _bootstrap_instance is None:
+        _bootstrap_instance = ApplicationBootstrap(app=app)
+    return await _bootstrap_instance.initialize_async()
+
+
 async def shutdown_application() -> None:
     """Global entrypoint to gracefully shutdown application runtime services."""
     global _bootstrap_instance
@@ -284,3 +315,4 @@ async def shutdown_application() -> None:
         if _bootstrap_instance is not None:
             await _bootstrap_instance.shutdown()
             _bootstrap_instance = None
+

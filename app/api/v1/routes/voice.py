@@ -7,12 +7,12 @@ text-to-speech synthesis, and voice system health status via ConversationService
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.exceptions import (
-    BadRequestError,
+    AppException,
+    AuthenticationError,
+    AuthorizationError,
     ConflictError,
-    ForbiddenError,
-    InternalServerException,
-    NotFoundError,
-    UnauthorizedError,
+    InternalServerError,
+    ResourceNotFoundError,
     ValidationError,
 )
 from app.dependencies.providers import get_conversation_service
@@ -34,16 +34,13 @@ router = APIRouter(
 def _raise_http_exception(exc: Exception) -> None:
     """Map application exceptions to appropriate HTTP responses."""
 
-    if isinstance(exc, BadRequestError):
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if isinstance(exc, UnauthorizedError):
+    if isinstance(exc, AuthenticationError):
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-    if isinstance(exc, ForbiddenError):
+    if isinstance(exc, AuthorizationError):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    if isinstance(exc, NotFoundError):
+    if isinstance(exc, ResourceNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     if isinstance(exc, ConflictError):
@@ -52,7 +49,10 @@ def _raise_http_exception(exc: Exception) -> None:
     if isinstance(exc, ValidationError):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    if isinstance(exc, InternalServerException):
+    if isinstance(exc, InternalServerError):
+        err_code = getattr(exc, "error_code", None)
+        if err_code in ("SPEECH_KEY_MISSING", "TTS_KEY_MISSING", "STT_PROVIDER_NOT_CONFIGURED", "TTS_PROVIDER_NOT_CONFIGURED"):
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     raise HTTPException(
@@ -118,6 +118,16 @@ async def get_voice_health(
 ):
     """Return health information for the voice pipeline."""
     try:
-        return await conversation_service.health_check()
+        is_healthy = await conversation_service.health_check()
+        return {
+            "status": "healthy" if is_healthy else "degraded",
+            "healthy": is_healthy,
+            "service": "Voice Pipeline",
+        }
     except Exception as exc:
-        _raise_http_exception(exc)
+        return {
+            "status": "unhealthy",
+            "healthy": False,
+            "service": "Voice Pipeline",
+            "detail": str(exc),
+        }

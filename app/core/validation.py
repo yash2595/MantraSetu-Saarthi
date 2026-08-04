@@ -151,7 +151,19 @@ class StartupValidator:
         if self._app is None:
             return
 
-        registered_paths = {getattr(r, "path", "") for r in self._app.routes}
+        def _extract_paths(routes, current_prefix=""):
+            paths = set()
+            for r in routes:
+                if hasattr(r, "path"):
+                    paths.add(current_prefix + r.path)
+                elif hasattr(r, "original_router") and hasattr(r, "include_context"):
+                    prefix = getattr(r.include_context, "prefix", "")
+                    paths.update(_extract_paths(r.original_router.routes, current_prefix + prefix))
+                elif hasattr(r, "routes"):
+                    paths.update(_extract_paths(r.routes, current_prefix))
+            return paths
+
+        registered_paths = _extract_paths(self._app.routes)
         missing_rest = MANDATORY_REST_PATHS - registered_paths
         missing_ws = MANDATORY_WS_PATHS - registered_paths
 

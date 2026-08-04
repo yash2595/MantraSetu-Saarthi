@@ -35,6 +35,7 @@ class AIService(BaseService):
             default_provider_name: Optional default provider name string.
         """
         self._factory: LLMProviderFactory = factory or llm_factory
+        self._instances: dict[str, BaseLLMProvider] = {}
 
         self._default_provider_name: str = (
             default_provider_name or llm_settings.provider
@@ -82,7 +83,15 @@ class AIService(BaseService):
             target_name,
         )
 
-        return self._factory.get(target_name)
+        if target_name not in self._instances:
+            provider_item = self._factory.get(target_name)
+            if isinstance(provider_item, type):
+                self._instances[target_name] = provider_item()
+            else:
+                self._instances[target_name] = provider_item
+
+        return self._instances[target_name]
+
 
     # Public Async Interface Methods
     async def generate(

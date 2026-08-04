@@ -56,7 +56,7 @@ class ConversationTelemetryEngine:
             if len(self._slot_completion_rates) > 1000:
                 self._slot_completion_rates.pop(0)
 
-    def record_clarification(() -> None:
+    def record_clarification(self) -> None:
         """Record clarification prompt event."""
         with self._lock:
             self._clarification_count += 1

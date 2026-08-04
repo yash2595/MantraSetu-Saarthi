@@ -20,6 +20,13 @@ from app.core.exceptions.base import (
     ValidationError,
 )
 
+# Backwards compatibility exception aliases
+BadRequestError = ValidationError
+NotFoundError = ResourceNotFoundError
+UnauthorizedError = AuthenticationError
+ForbiddenError = AuthorizationError
+InternalServerException = InternalServerError
+
 __all__ = [
     "ApplicationError",
     "AppException",
@@ -35,4 +42,9 @@ __all__ = [
     "HealthCheckError",
     "DependencyError",
     "InternalServerError",
+    "BadRequestError",
+    "NotFoundError",
+    "UnauthorizedError",
+    "ForbiddenError",
+    "InternalServerException",
 ]

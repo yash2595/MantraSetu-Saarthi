@@ -77,6 +77,12 @@ DEFAULT_INTENT_MAPPINGS: dict[str, dict[str, Any]] = {
         "confidence": 0.98,
         "required_workflow": "USER_PROFILE",
     },
+    "PANDIT_ONBOARDING": {
+        "target_route": "/pandit",
+        "action_type": ActionType.NAVIGATE,
+        "confidence": 0.97,
+        "required_workflow": "PANDIT_ONBOARDING",
+    },
     "VIEW_SERVICES": {
         "target_route": "/services",
         "action_type": ActionType.NAVIGATE,

@@ -138,7 +138,14 @@ from app.orchestrator.builder import AIOrchestratorBuilder
 
 
 def build_ai_orchestrator() -> AIOrchestrator:
-    """Build the primary AIOrchestrator instance with default dependency graph via builder."""
+    """Build the primary AIOrchestrator instance."""
+    return AIOrchestrator()
+
+
+def build_chat_orchestrator() -> ChatOrchestrator:
+    """Build legacy ChatOrchestrator compatibility wrapper over AIOrchestrator."""
+    ai_orch = build_ai_orchestrator()
+    # Provide dummy dependencies since the new AIOrchestrator handles its own
     parser = PassThroughStructuredOutputParser()
     dependencies = OrchestratorDependencies(
         context_loader=NoopConversationContextLoader(),
@@ -147,21 +154,8 @@ def build_ai_orchestrator() -> AIOrchestrator:
         output_parser=parser,
         routing_policy=DefaultRoutingPolicy(),
         response_formatter=parser,
-        memory_gateway=None,
-        rag_gateway=None,
-        planner_gateway=None,
-        navigation_gateway=None,
-        tool_registry=None,
-        tool_gateway=None,
     )
-
-    return AIOrchestratorBuilder().with_dependencies(dependencies).build()
-
-
-def build_chat_orchestrator() -> ChatOrchestrator:
-    """Build legacy ChatOrchestrator compatibility wrapper over AIOrchestrator."""
-    ai_orch = build_ai_orchestrator()
     return ChatOrchestrator(
-        dependencies=ai_orch.dependencies,
+        dependencies=dependencies,
         ai_orchestrator=ai_orch,
     )

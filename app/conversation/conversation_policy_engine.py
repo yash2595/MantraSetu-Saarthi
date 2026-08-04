@@ -25,7 +25,7 @@ class ConversationPolicyEngine:
     # Intents requiring authenticated session state
     _AUTH_REQUIRED_INTENTS = {"PAYMENT_PROCESS", "USER_PROFILE_UPDATE", "CANCEL_BOOKING", "VIEW_ORDERS"}
     # Intents requiring explicit user confirmation
-    _CONFIRMATION_REQUIRED_INTENTS = {"BOOKING_PUJA", "PAYMENT_PROCESS", "CANCEL_BOOKING"}
+    _CONFIRMATION_REQUIRED_INTENTS = {"PAYMENT_PROCESS", "CANCEL_BOOKING"}
 
     def __init__(self) -> None:
         self._lock = RLock()
